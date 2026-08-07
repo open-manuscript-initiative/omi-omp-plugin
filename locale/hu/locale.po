@@ -1,0 +1,23 @@
+msgid "plugins.generic.studioIntegration.displayName"
+msgstr "Open Manuscript Studio integráció"
+
+msgid "plugins.generic.studioIntegration.description"
+msgstr "Összekapcsolja az Open Monograph Press rendszert az Open Manuscript Initiative és az Open Manuscript Studio rendszerével."
+
+msgid "plugins.generic.studioIntegration.openInStudio"
+msgstr "Megnyitás a Studióban"
+
+msgid "plugins.generic.studioIntegration.settings.connection"
+msgstr "Studio kapcsolat"
+
+msgid "plugins.generic.studioIntegration.settings.studioUrl"
+msgstr "Studio URL"
+
+msgid "plugins.generic.studioIntegration.settings.installationId"
+msgstr "Telepítési azonosító"
+
+msgid "plugins.generic.studioIntegration.settings.sharedSecret"
+msgstr "Megosztott titok"
+
+msgid "plugins.generic.studioIntegration.settings.tokenTtl"
+msgstr "Token élettartama (másodperc)"

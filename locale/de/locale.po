@@ -1,0 +1,23 @@
+msgid "plugins.generic.studioIntegration.displayName"
+msgstr "Open Manuscript Studio Integration"
+
+msgid "plugins.generic.studioIntegration.description"
+msgstr "Verbindet Open Monograph Press mit der Open Manuscript Initiative und Open Manuscript Studio."
+
+msgid "plugins.generic.studioIntegration.openInStudio"
+msgstr "In Studio öffnen"
+
+msgid "plugins.generic.studioIntegration.settings.connection"
+msgstr "Studio-Verbindung"
+
+msgid "plugins.generic.studioIntegration.settings.studioUrl"
+msgstr "Studio-URL"
+
+msgid "plugins.generic.studioIntegration.settings.installationId"
+msgstr "Installations-ID"
+
+msgid "plugins.generic.studioIntegration.settings.sharedSecret"
+msgstr "Gemeinsames Geheimnis"
+
+msgid "plugins.generic.studioIntegration.settings.tokenTtl"
+msgstr "Token-Gültigkeitsdauer (Sekunden)"

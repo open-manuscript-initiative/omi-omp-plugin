@@ -1,8 +1,9 @@
 <?php
 namespace APP\plugins\generic\studioIntegration;
 
-use APP\core\Application;
+use APP\facades\Repo;
 use APP\plugins\generic\studioIntegration\classes\Core\ApiResponse;
+use APP\plugins\generic\studioIntegration\classes\Core\LaunchToken;
 
 class StudioIntegrationApiHandler extends \APP\handler\Handler
 {
@@ -22,15 +23,15 @@ class StudioIntegrationApiHandler extends \APP\handler\Handler
             'profile' => 'omi-integration/1/omp',
             'implementation' => [
                 'name' => 'OMI OMP Integration Plugin',
-                'version' => '1.1.0',
+                'version' => '1.2.0',
             ],
             'capabilities' => [
                 'launch',
-            ],
-            'plannedCapabilities' => [
                 'metadata.read',
                 'contributors.read',
                 'files.read',
+            ],
+            'plannedCapabilities' => [
                 'manuscript.read',
                 'manuscript.write',
                 'review.read',
@@ -61,5 +62,158 @@ class StudioIntegrationApiHandler extends \APP\handler\Handler
             ],
         ]);
         return null;
+    }
+
+    public function metadata($args, $request)
+    {
+        $claims = $this->authorizeRead($request, 'metadata.read');
+        if (!$claims) return null;
+        $submission = $this->loadSubmission($claims, $request);
+        if (!$submission) return null;
+        $publication = $submission->getCurrentPublication();
+
+        ApiResponse::send([
+            'protocol' => 'omi-integration/1',
+            'profile' => 'omi-integration/1/omp',
+            'submission' => [
+                'externalId' => (string)$submission->getId(),
+                'type' => 'monograph',
+                'primaryLocale' => $submission->getData('locale'),
+                'status' => $submission->getData('status'),
+                'stageId' => $submission->getData('stageId'),
+                'title' => $publication->getData('title') ?: [],
+                'subtitle' => $publication->getData('subtitle') ?: [],
+                'abstract' => $publication->getData('abstract') ?: [],
+                'keywords' => $publication->getData('keywords') ?: [],
+                'prefix' => $publication->getData('prefix') ?: [],
+                'datePublished' => $publication->getData('datePublished'),
+                'publicationId' => (string)$publication->getId(),
+                'updatedAt' => $submission->getData('lastModified'),
+            ],
+        ]);
+        return null;
+    }
+
+    public function contributors($args, $request)
+    {
+        $claims = $this->authorizeRead($request, 'contributors.read');
+        if (!$claims) return null;
+        $submission = $this->loadSubmission($claims, $request);
+        if (!$submission) return null;
+        $publication = $submission->getCurrentPublication();
+        $authors = $publication->getData('authors') ?: [];
+        $contributors = [];
+
+        foreach ($authors as $index => $author) {
+            $orcid = trim((string)$author->getData('orcid'));
+            $contributors[] = [
+                'externalId' => (string)$author->getId(),
+                'name' => [
+                    'given' => $author->getLocalizedGivenName(),
+                    'family' => $author->getLocalizedFamilyName(),
+                ],
+                'email' => $author->getEmail(),
+                'affiliation' => $author->getLocalizedAffiliationNamesAsString(),
+                'country' => $author->getData('country'),
+                'sequence' => $author->getSequence() ?: ($index + 1),
+                'primaryContact' => (bool)$author->getPrimaryContact(),
+                'isEditor' => method_exists($author, 'getIsEditor') ? (bool)$author->getIsEditor() : false,
+                'identifiers' => $orcid !== '' ? [['scheme' => 'orcid', 'value' => $orcid]] : [],
+            ];
+        }
+
+        ApiResponse::send([
+            'protocol' => 'omi-integration/1',
+            'profile' => 'omi-integration/1/omp',
+            'submissionExternalId' => (string)$submission->getId(),
+            'contributors' => $contributors,
+        ]);
+        return null;
+    }
+
+    public function files($args, $request)
+    {
+        $claims = $this->authorizeRead($request, 'files.read');
+        if (!$claims) return null;
+        $submission = $this->loadSubmission($claims, $request);
+        if (!$submission) return null;
+
+        $files = [];
+        $submissionFiles = Repo::submissionFile()
+            ->getCollector()
+            ->filterBySubmissionIds([$submission->getId()])
+            ->getMany();
+
+        foreach ($submissionFiles as $submissionFile) {
+            $files[] = [
+                'externalId' => (string)$submissionFile->getId(),
+                'fileId' => (string)$submissionFile->getData('fileId'),
+                'name' => $submissionFile->getData('name') ?: $submissionFile->getData('originalFileName'),
+                'mediaType' => $submissionFile->getData('mimetype'),
+                'fileStage' => $submissionFile->getData('fileStage'),
+                'genreId' => $submissionFile->getData('genreId'),
+                'assocType' => $submissionFile->getData('assocType'),
+                'assocId' => $submissionFile->getData('assocId'),
+                'createdAt' => $submissionFile->getData('createdAt'),
+                'updatedAt' => $submissionFile->getData('updatedAt'),
+            ];
+        }
+
+        ApiResponse::send([
+            'protocol' => 'omi-integration/1',
+            'profile' => 'omi-integration/1/omp',
+            'submissionExternalId' => (string)$submission->getId(),
+            'files' => $files,
+        ]);
+        return null;
+    }
+
+    private function authorizeRead($request, string $requiredScope): ?array
+    {
+        $context = $request->getContext();
+        if (!$context) {
+            ApiResponse::error('context_required', 'A press context is required.', 400);
+            return null;
+        }
+
+        $payload = trim((string)$request->getUserVar('payload'));
+        $signature = trim((string)$request->getUserVar('signature'));
+        if ($payload === '' || $signature === '') {
+            ApiResponse::error('missing_assertion', 'A signed OMI assertion is required.', 401);
+            return null;
+        }
+
+        $claims = LaunchToken::verify(
+            $payload,
+            $signature,
+            $this->plugin->getSharedSecret($context->getId()),
+            $context->getId()
+        );
+        if (!$claims || ($claims['profile'] ?? null) !== 'omi-integration/1/omp') {
+            ApiResponse::error('invalid_assertion', 'The OMI assertion is invalid or expired.', 401);
+            return null;
+        }
+        if (!in_array($requiredScope, (array)($claims['scope'] ?? []), true)) {
+            ApiResponse::error('scope_denied', 'The OMI assertion does not grant the required scope.', 403);
+            return null;
+        }
+        return $claims;
+    }
+
+    private function loadSubmission(array $claims, $request)
+    {
+        $submissionId = (int)($claims['submission']['externalId'] ?? 0);
+        if ($submissionId < 1) {
+            ApiResponse::error('submission_required', 'A monograph submission is required.', 400);
+            return null;
+        }
+
+        $submission = Repo::submission()->get($submissionId);
+        $context = $request->getContext();
+        if (!$submission || !$context || (int)$submission->getData('contextId') !== (int)$context->getId()) {
+            ApiResponse::error('submission_not_found', 'The monograph was not found in this press.', 404);
+            return null;
+        }
+        return $submission;
     }
 }

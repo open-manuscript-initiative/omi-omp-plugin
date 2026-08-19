@@ -67,14 +67,9 @@ class StudioIntegrationApiHandler extends \APP\handler\Handler
     public function metadata($args, $request)
     {
         $claims = $this->authorizeRead($request, 'metadata.read');
-        if (!$claims) {
-            return null;
-        }
-
+        if (!$claims) return null;
         $submission = $this->loadSubmission($claims, $request);
-        if (!$submission) {
-            return null;
-        }
+        if (!$submission) return null;
         $publication = $submission->getCurrentPublication();
 
         ApiResponse::send([
@@ -102,34 +97,28 @@ class StudioIntegrationApiHandler extends \APP\handler\Handler
     public function contributors($args, $request)
     {
         $claims = $this->authorizeRead($request, 'contributors.read');
-        if (!$claims) {
-            return null;
-        }
-
+        if (!$claims) return null;
         $submission = $this->loadSubmission($claims, $request);
-        if (!$submission) {
-            return null;
-        }
+        if (!$submission) return null;
         $publication = $submission->getCurrentPublication();
         $authors = $publication->getData('authors') ?: [];
         $contributors = [];
 
         foreach ($authors as $index => $author) {
+            $orcid = trim((string)$author->getData('orcid'));
             $contributors[] = [
                 'externalId' => (string)$author->getId(),
                 'name' => [
-                    'given' => $author->getGivenName(),
-                    'family' => $author->getFamilyName(),
+                    'given' => $author->getLocalizedGivenName(),
+                    'family' => $author->getLocalizedFamilyName(),
                 ],
                 'email' => $author->getEmail(),
-                'affiliation' => $author->getAffiliation(),
+                'affiliation' => $author->getLocalizedAffiliationNamesAsString(),
                 'country' => $author->getData('country'),
-                'sequence' => $index + 1,
-                'primaryContact' => (bool)$author->getData('primaryContact'),
+                'sequence' => $author->getSequence() ?: ($index + 1),
+                'primaryContact' => (bool)$author->getPrimaryContact(),
                 'isEditor' => method_exists($author, 'getIsEditor') ? (bool)$author->getIsEditor() : false,
-                'identifiers' => array_values(array_filter([
-                    $author->getOrcid() ? ['scheme' => 'orcid', 'value' => $author->getOrcid()] : null,
-                ])),
+                'identifiers' => $orcid !== '' ? [['scheme' => 'orcid', 'value' => $orcid]] : [],
             ];
         }
 
@@ -145,14 +134,9 @@ class StudioIntegrationApiHandler extends \APP\handler\Handler
     public function files($args, $request)
     {
         $claims = $this->authorizeRead($request, 'files.read');
-        if (!$claims) {
-            return null;
-        }
-
+        if (!$claims) return null;
         $submission = $this->loadSubmission($claims, $request);
-        if (!$submission) {
-            return null;
-        }
+        if (!$submission) return null;
 
         $files = [];
         $submissionFiles = Repo::submissionFile()

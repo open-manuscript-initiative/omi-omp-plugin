@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.2.3 - 2026-08-29
+
+PKP/OMP 3.5 workflow-compliance hardening.
+
+### Fixed
+
+- Reviewer Studio launch now selects only the current incomplete OMP review assignment instead of a historical assignment.
+- Reviewer API assertions are rejected when their assignment no longer belongs to the submission's current OMP review stage/round.
+- Author revision uploads are restricted to the submission's current review stage and current review round.
+- Completed review assignments are read-only for the legacy review-result writeback endpoint.
+- Legacy free-text recommendation values are rejected instead of being encoded into editor comments.
+- Capability discovery now reports the implemented author/reviewer revision write APIs and current plugin version.
+
+### Documentation
+
+- Updated installation and status documentation to OMP 3.5.x / PHP 8.2+.
+- Added a PKP/OMP authority and compatibility matrix.
+- Added security policy and explicit Plugin Gallery readiness notes.
+
 ## 1.2.2 - 2026-08-29
 
 Native OMP/PKP 3.5 review and revision API update.

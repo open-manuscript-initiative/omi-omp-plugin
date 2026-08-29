@@ -60,7 +60,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => Omp35Adapter::PROFILE,
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OMP',
-                'version' => '1.1.0',
+                'version' => '1.2.3',
                 'platform' => 'omp',
             ],
             'context' => (new Omp35Adapter())->mapContext($context, $request),
@@ -71,9 +71,11 @@ class StudioIntegrationApiController extends PKPBaseController
                 'reviewers.read',
                 'files.read',
                 'files.content.read',
+                'author.revision.write',
                 'review.metadata.read',
                 'review.files.read',
                 'review.manuscript.read',
+                'review.revision.write',
                 'review.response.write',
                 'review.form.read',
                 'review.form.write',
@@ -81,8 +83,6 @@ class StudioIntegrationApiController extends PKPBaseController
                 'review.files.scoped',
             ],
             'plannedCapabilities' => [
-                'author.revision.write',
-                'review.revision.write',
                 'review.recommendations.native',
                 'publication.export',
             ],
@@ -198,7 +198,7 @@ class StudioIntegrationApiController extends PKPBaseController
             }
             $reviewAssignment = $this->reviewAssignmentForClaims($claims, $submissionId);
             if (!$reviewAssignment) {
-                return $this->error('review_assignment_forbidden', 'The review assignment is not valid for this reviewer and monograph.', 403);
+                return $this->error('review_assignment_forbidden', 'The review assignment is not valid for the current OMP review round.', 403);
             }
             $files = array_values(array_filter(
                 $files,
@@ -229,7 +229,7 @@ class StudioIntegrationApiController extends PKPBaseController
             return $this->error('insufficient_scope', 'Reviewer form access requires review.form.read.', 403, ['required' => 'review.form.read']);
         }
         $assignment = $this->reviewAssignmentForClaims($claims, $submissionId);
-        if (!$assignment) return $this->error('review_assignment_forbidden', 'The review assignment is not valid for this reviewer and monograph.', 403);
+        if (!$assignment) return $this->error('review_assignment_forbidden', 'The review assignment is not valid for the current OMP review round.', 403);
 
         $formId = (int)$assignment->getData('reviewFormId');
         if ($formId < 1) {
@@ -343,18 +343,28 @@ class StudioIntegrationApiController extends PKPBaseController
         if (!($reviewAssignment instanceof ReviewAssignment) || $reviewAssignment->getCancelled() || $reviewAssignment->getDeclined()) {
             return $this->error('review_assignment_not_found', 'Review assignment not found or no longer writable.', 404);
         }
+        if ($reviewAssignment->getDateCompleted()) {
+            return $this->error('review_already_completed', 'A completed OMP review assignment is read-only.', 409);
+        }
         $submission = Repo::submission()->get($submissionId, $context->getId());
         if (!$submission) return $this->error('submission_not_found', 'Monograph submission not found in this press.', 404);
 
         $authorComment = trim((string)$illuminateRequest->input('authorAndEditorComment', ''));
         $editorComment = trim((string)$illuminateRequest->input('editorOnlyComment', ''));
         $recommendation = trim((string)$illuminateRequest->input('recommendation', ''));
+        if ($recommendation !== '') {
+            return $this->error(
+                'legacy_recommendation_not_supported',
+                'Textual recommendations are not native OMP recommendation identifiers. Use review-result-v2 capability discovery instead.',
+                422
+            );
+        }
         $formResponses = $illuminateRequest->input('reviewFormResponses', []);
         if (!is_array($formResponses)) return $this->error('invalid_review_form_responses', 'Review form responses must be an array.', 400);
 
         $validatedFormResponses = $this->validateReviewFormResponses($reviewAssignment, $formResponses);
         if ($validatedFormResponses instanceof JsonResponse) return $validatedFormResponses;
-        if ($authorComment === '' && $editorComment === '' && $recommendation === '' && $validatedFormResponses === []) {
+        if ($authorComment === '' && $editorComment === '' && $validatedFormResponses === []) {
             return $this->error('empty_review_result', 'The review result does not contain any writable content.', 400);
         }
 
@@ -362,9 +372,6 @@ class StudioIntegrationApiController extends PKPBaseController
             Repo::reviewAssignment()->saveReviewFormResponse($reviewAssignment, $elementId, $value);
         }
         if ($authorComment !== '') Repo::reviewAssignment()->saveReviewComment($reviewAssignment, $authorComment, true);
-        if ($recommendation !== '') {
-            $editorComment = trim(($editorComment !== '' ? $editorComment . "\n\n" : '') . '[OMI recommendation: ' . $recommendation . ']');
-        }
         if ($editorComment !== '') Repo::reviewAssignment()->saveReviewComment($reviewAssignment, $editorComment, false);
 
         return response()->json([
@@ -374,6 +381,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'reviewAssignmentExternalId' => (string)$reviewAssignmentId,
             'reviewFormResponsesWritten' => count($validatedFormResponses),
             'written' => true,
+            'deprecatedEndpoint' => true,
         ]);
     }
 
@@ -521,6 +529,13 @@ class StudioIntegrationApiController extends PKPBaseController
         if (!($assignment instanceof ReviewAssignment)) return null;
         if ((int)$assignment->getSubmissionId() !== $submissionId || (int)$assignment->getReviewerId() !== $actorId) return null;
         if ($assignment->getCancelled() || $assignment->getDeclined()) return null;
+
+        $submission = Repo::submission()->get($submissionId);
+        if (!$submission || (int)$submission->getData('stageId') !== (int)$assignment->getStageId()) return null;
+        /** @var \PKP\submission\reviewRound\ReviewRoundDAO $reviewRoundDao */
+        $reviewRoundDao = DAORegistry::getDAO('ReviewRoundDAO');
+        $currentRound = $reviewRoundDao->getCurrentRoundBySubmissionId($submissionId, (int)$assignment->getStageId());
+        if ((int)$assignment->getRound() !== (int)$currentRound) return null;
         return $assignment;
     }
 

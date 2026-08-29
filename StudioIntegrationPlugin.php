@@ -193,12 +193,14 @@ class StudioIntegrationPlugin extends GenericPlugin
         $submission = Repo::submission()->get($submissionId, $context->getId());
         if (!$submission) return null;
         $reviewAssignment = Repo::reviewAssignment()->getCollector()
+            ->filterByContextIds([$context->getId()])
             ->filterBySubmissionIds([$submissionId])
-            ->filterByReviewerIds([$user->getId()], true)
+            ->filterByReviewerIds([$user->getId()])
+            ->filterByIsIncomplete(true)
+            ->limit(1)
             ->getMany()
             ->first();
         if (!($reviewAssignment instanceof ReviewAssignment)) return null;
-        if ($reviewAssignment->getCancelled() || $reviewAssignment->getDeclined()) return null;
 
         $contextId = (int)$context->getId();
         $studioUrl = rtrim(trim((string)$this->getSetting($contextId, 'studioUrl')), '/');
@@ -304,11 +306,14 @@ class StudioIntegrationPlugin extends GenericPlugin
 
         if ($user->hasRole([Role::ROLE_ID_REVIEWER], $context->getId())) {
             $assignment = Repo::reviewAssignment()->getCollector()
+                ->filterByContextIds([$context->getId()])
                 ->filterBySubmissionIds([$submissionId])
-                ->filterByReviewerIds([$user->getId()], true)
+                ->filterByReviewerIds([$user->getId()])
+                ->filterByIsAccessibleByReviewer(true)
+                ->limit(1)
                 ->getMany()
                 ->first();
-            return $assignment instanceof ReviewAssignment && !$assignment->getCancelled() && !$assignment->getDeclined();
+            return $assignment instanceof ReviewAssignment;
         }
         return false;
     }

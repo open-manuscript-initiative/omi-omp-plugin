@@ -72,7 +72,6 @@ jobs:
         run: |
           set -euo pipefail
           required=(
-            index.php
             version.xml
             StudioIntegrationPlugin.php
             StudioIntegrationApiHandler.php

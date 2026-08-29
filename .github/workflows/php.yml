@@ -78,6 +78,7 @@ jobs:
             INSTALL.md
             SECURITY.md
             PKP_COMPATIBILITY.md
+            AI-DECLARATION.md
             StudioIntegrationPlugin.php
             StudioIntegrationApiHandler.php
             StudioIntegrationApiController.php

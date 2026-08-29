@@ -70,7 +70,7 @@ class StudioIntegrationNativeApiController extends PKPBaseController
             'profile' => Omp35Adapter::PROFILE,
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OMP',
-                'version' => '1.2.2',
+                'version' => '1.2.3',
                 'platform' => 'omp',
             ],
             'nativeApis' => [
@@ -88,6 +88,7 @@ class StudioIntegrationNativeApiController extends PKPBaseController
                     'externalFileStage' => SubmissionFile::SUBMISSION_FILE_REVIEW_REVISION,
                     'internalFileStage' => SubmissionFile::SUBMISSION_FILE_INTERNAL_REVIEW_REVISION,
                     'association' => 'reviewRound',
+                    'currentRoundOnly' => true,
                 ],
             ],
         ]);
@@ -105,7 +106,7 @@ class StudioIntegrationNativeApiController extends PKPBaseController
 
         $assignment = $this->reviewAssignmentForClaims($claims, $submissionId);
         if (!$assignment) {
-            return $this->error('review_assignment_forbidden', 'The review assignment is not valid for this reviewer and monograph.', 403);
+            return $this->error('review_assignment_forbidden', 'The review assignment is not valid for the current OMP review round.', 403);
         }
 
         $recommendationsSupported = Application::get()->hasCustomizableReviewerRecommendation();
@@ -155,7 +156,7 @@ class StudioIntegrationNativeApiController extends PKPBaseController
         }
         $assignment = $this->reviewAssignmentForClaims($claims, $submissionId);
         if (!$assignment) {
-            return $this->error('review_assignment_forbidden', 'The review assignment is not valid for this reviewer and monograph.', 403);
+            return $this->error('review_assignment_forbidden', 'The review assignment is not valid for the current OMP review round.', 403);
         }
 
         $actorId = (int)($claims['actor']['externalId'] ?? 0);
@@ -192,7 +193,7 @@ class StudioIntegrationNativeApiController extends PKPBaseController
         }
         $assignment = $this->reviewAssignmentForClaims($claims, $submissionId);
         if (!$assignment) {
-            return $this->error('review_assignment_forbidden', 'The review assignment is not valid for this reviewer and monograph.', 403);
+            return $this->error('review_assignment_forbidden', 'The review assignment is not valid for the current OMP review round.', 403);
         }
         if ($assignment->getDateCompleted()) {
             return $this->error('review_already_completed', 'A completed review assignment can no longer receive reviewer attachments.', 409);
@@ -245,6 +246,13 @@ class StudioIntegrationNativeApiController extends PKPBaseController
 
         $submission = Repo::submission()->get($submissionId, $context->getId());
         if (!$submission) return $this->error('submission_not_found', 'Monograph submission not found.', 404);
+        if ((int)$submission->getData('stageId') !== $stageId) {
+            return $this->error('review_round_not_current_stage', 'Author revisions may only be uploaded to the current OMP review stage.', 409);
+        }
+        $currentRound = $reviewRoundDao->getCurrentRoundBySubmissionId($submissionId, $stageId);
+        if ((int)$reviewRound->getRound() !== (int)$currentRound) {
+            return $this->error('review_round_not_current', 'Author revisions may only be uploaded to the current OMP review round.', 409);
+        }
 
         $sourceId = (int)$illuminateRequest->input('sourceSubmissionFileExternalId', 0);
         $sourceFile = $sourceId > 0 ? Repo::submissionFile()->get($sourceId, $submissionId) : null;
@@ -282,7 +290,7 @@ class StudioIntegrationNativeApiController extends PKPBaseController
         }
         $assignment = $this->reviewAssignmentForClaims($claims, $submissionId);
         if (!$assignment) {
-            return $this->error('review_assignment_forbidden', 'The review assignment is not valid for this reviewer and monograph.', 403);
+            return $this->error('review_assignment_forbidden', 'The review assignment is not valid for the current OMP review round.', 403);
         }
         if ($assignment->getDateCompleted()) {
             return $this->error('review_already_completed', 'The review assignment has already been completed in OMP.', 409);
@@ -514,6 +522,14 @@ class StudioIntegrationNativeApiController extends PKPBaseController
         if (!($assignment instanceof ReviewAssignment)) return null;
         if ((int)$assignment->getSubmissionId() !== $submissionId || (int)$assignment->getReviewerId() !== $actorId) return null;
         if ($assignment->getCancelled() || $assignment->getDeclined()) return null;
+
+        $submission = Repo::submission()->get($submissionId);
+        if (!$submission || (int)$submission->getData('stageId') !== (int)$assignment->getStageId()) return null;
+        /** @var ReviewRoundDAO $reviewRoundDao */
+        $reviewRoundDao = DAORegistry::getDAO('ReviewRoundDAO');
+        $currentRound = $reviewRoundDao->getCurrentRoundBySubmissionId($submissionId, (int)$assignment->getStageId());
+        if ((int)$assignment->getRound() !== (int)$currentRound) return null;
+
         return $assignment;
     }
 

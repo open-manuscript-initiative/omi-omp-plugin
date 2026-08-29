@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version without v prefix, for example 1.2.1'
+        description: 'Release version without v prefix, for example 1.2.3'
         required: true
         type: string
 
@@ -63,14 +63,28 @@ jobs:
             php -l "$file"
           done < <(find . -type f -name '*.php' -not -path './vendor/*' -print0)
 
-      - name: Verify package structure
+      - name: Verify PKP plugin structure
         shell: bash
         run: |
           set -euo pipefail
-          required=(version.xml StudioIntegrationPlugin.php StudioIntegrationApiHandler.php StudioIntegrationApiController.php classes/Adapters/Omp35Adapter.php)
+          required=(
+            version.xml
+            LICENSE
+            README.md
+            INSTALL.md
+            SECURITY.md
+            PKP_COMPATIBILITY.md
+            StudioIntegrationPlugin.php
+            StudioIntegrationApiHandler.php
+            StudioIntegrationApiController.php
+            StudioIntegrationNativeApiController.php
+            classes/Adapters/Omp35Adapter.php
+            locale/en/locale.po
+          )
           for file in "${required[@]}"; do
             test -s "$file" || { echo "Missing or empty required file: $file" >&2; exit 1; }
           done
+          php -r '$xml = simplexml_load_file("version.xml"); if ((string)$xml->application !== "studioIntegration" || (string)$xml->type !== "plugins.generic" || (string)$xml->class !== "StudioIntegrationPlugin") { fwrite(STDERR, "Unexpected PKP plugin metadata\n"); exit(1); }'
 
       - name: Build installable archives
         id: package
@@ -103,8 +117,14 @@ jobs:
           PACKAGE: ${{ steps.package.outputs.package }}
         run: |
           set -euo pipefail
-          unzip -l "dist/${PACKAGE}.zip" | grep -F 'studioIntegration/version.xml'
-          tar -tzf "dist/${PACKAGE}.tar.gz" | grep -F 'studioIntegration/version.xml'
+          for path in \
+            studioIntegration/version.xml \
+            studioIntegration/StudioIntegrationPlugin.php \
+            studioIntegration/StudioIntegrationNativeApiController.php \
+            studioIntegration/locale/en/locale.po; do
+            unzip -l "dist/${PACKAGE}.zip" | grep -F "$path"
+            tar -tzf "dist/${PACKAGE}.tar.gz" | grep -F "$path"
+          done
           test -s dist/SHA256SUMS.txt
 
       - name: Create Git tag for manual release

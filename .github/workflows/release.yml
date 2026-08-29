@@ -108,6 +108,7 @@ jobs:
             zip -q -r "${PACKAGE}.zip" studioIntegration
             tar -czf "${PACKAGE}.tar.gz" studioIntegration
             sha256sum "${PACKAGE}.zip" "${PACKAGE}.tar.gz" > SHA256SUMS.txt
+            md5sum "${PACKAGE}.zip" "${PACKAGE}.tar.gz" > MD5SUMS.txt
           )
           echo "package=$PACKAGE" >> "$GITHUB_OUTPUT"
 
@@ -126,6 +127,7 @@ jobs:
             tar -tzf "dist/${PACKAGE}.tar.gz" | grep -F "$path"
           done
           test -s dist/SHA256SUMS.txt
+          test -s dist/MD5SUMS.txt
 
       - name: Create Git tag for manual release
         if: github.event_name == 'workflow_dispatch'
@@ -150,12 +152,13 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "dist/${PACKAGE}.zip" "dist/${PACKAGE}.tar.gz" dist/SHA256SUMS.txt --clobber
+            gh release upload "$TAG" "dist/${PACKAGE}.zip" "dist/${PACKAGE}.tar.gz" dist/SHA256SUMS.txt dist/MD5SUMS.txt --clobber
           else
             gh release create "$TAG" \
               "dist/${PACKAGE}.zip" \
               "dist/${PACKAGE}.tar.gz" \
               dist/SHA256SUMS.txt \
+              dist/MD5SUMS.txt \
               --title "OMI OMP Integration Plugin ${TAG}" \
               --generate-notes \
               --verify-tag

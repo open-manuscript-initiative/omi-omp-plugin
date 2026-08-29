@@ -90,8 +90,10 @@ class StudioIntegrationPlugin extends GenericPlugin
     public function registerApiController(string $hookName, APIRouter $apiRouter): bool
     {
         require_once($this->getPluginPath() . '/StudioIntegrationApiController.php');
+        require_once($this->getPluginPath() . '/StudioIntegrationNativeApiController.php');
         $apiRouter->registerPluginApiControllers([
             new StudioIntegrationApiController($this),
+            new StudioIntegrationNativeApiController($this),
         ]);
         return Hook::CONTINUE;
     }
@@ -149,6 +151,7 @@ class StudioIntegrationPlugin extends GenericPlugin
             : [
                 'metadata.read',
                 'files.read',
+                'author.revision.write',
             ];
 
         $claims = [
@@ -230,6 +233,7 @@ class StudioIntegrationPlugin extends GenericPlugin
                 'review.response.write',
                 'review.form.read',
                 'review.form.write',
+                'review.revision.write',
             ],
             'iat' => $now,
             'exp' => $now + $this->getTokenTtl($contextId),

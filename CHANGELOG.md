@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.2.2 - 2026-08-29
+
+Native OMP/PKP 3.5 review and revision API update.
+
+### Added
+
+- `GET /platform-capabilities` describing OMP-specific native API support instead of assuming OJS feature parity.
+- `GET /review-context` exposing assignment and review-round identity from the signed reviewer launch.
+- Assignment-scoped reviewer attachment listing and multipart upload.
+- Review-round-scoped author revision multipart upload for both internal and external review stages.
+- `POST /review-result-v2` with native recommendation-ID validation when the host application supports customizable recommendations.
+- `author.revision.write` and `review.revision.write` launch scopes.
+
+### OMP/PKP API alignment
+
+- Reviewer attachments are persisted as `SUBMISSION_FILE_REVIEW_ATTACHMENT` associated with `ASSOC_TYPE_REVIEW_ASSIGNMENT`, matching PKP review history queries.
+- Author revisions are persisted as `SUBMISSION_FILE_REVIEW_REVISION` or `SUBMISSION_FILE_INTERNAL_REVIEW_REVISION` associated with `ASSOC_TYPE_REVIEW_ROUND`.
+- Submission-file storage, validation and review-round association use `Repo::submissionFile()` and the same PKP repository semantics used by the native submission-file API.
+- Reviewer recommendation support is discovered from `Application::hasCustomizableReviewerRecommendation()`. OMP 3.5 currently returns `false`, so no OJS recommendation identifiers are fabricated or encoded into comments.
+- Review completion remains authoritative in the native OMP reviewer workflow because completion triggers notifications, logs and invitation finalization beyond a single database field update.
+
+### Security
+
+- File uploads remain bound to the signed launch actor, submission and role scope.
+- Reviewer attachments are bound to the concrete review assignment and its review round.
+- Author revision review-round IDs are checked against the launched monograph and OMP review stages.
+- File genres are validated against the current press; ambiguous genre selection is rejected rather than guessed.
+
 ## 1.2.1 - 2026-08-29
 
 OMP 3.5 integration hardening and peer-review parity foundation.

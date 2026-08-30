@@ -17,10 +17,13 @@ use PKP\submission\reviewAssignment\ReviewAssignment;
 
 class StudioIntegrationPlugin extends GenericPlugin
 {
+    private bool $assetsInjected = false;
+
     public function register($category, $path, $mainContextId = null)
     {
         $success = parent::register($category, $path, $mainContextId);
         if ($success && $this->getEnabled($mainContextId)) {
+            Hook::add('TemplateManager::display', $this->displayTemplateHook(...));
             Hook::add('LoadHandler', $this->loadApiHandler(...));
             Hook::add('APIHandler::endpoints::plugin', $this->registerApiController(...));
         }
@@ -96,6 +99,75 @@ class StudioIntegrationPlugin extends GenericPlugin
             new StudioIntegrationNativeApiController($this),
         ]);
         return Hook::CONTINUE;
+    }
+
+    public function displayTemplateHook(string $hookName, array $params): bool
+    {
+        if ($this->assetsInjected) {
+            return false;
+        }
+
+        $request = Application::get()->getRequest();
+        $context = $request->getContext();
+        $user = $request->getUser();
+        if (!$context || !$user) {
+            return false;
+        }
+
+        $requestedPage = $request->getRequestedPage();
+        if (!in_array($requestedPage, ['workflow', 'dashboard', 'reviewer'], true)) {
+            return false;
+        }
+
+        $launchMode = $this->resolveLaunchMode(
+            $request,
+            $requestedPage === 'reviewer' ? 'review' : 'auto'
+        );
+        $contextId = (int)$context->getId();
+        $studioUrl = rtrim(trim((string)$this->getSetting($contextId, 'studioUrl')), '/');
+        if ($studioUrl === '') {
+            return false;
+        }
+        if ($this->getSharedSecret($contextId) === '') {
+            return false;
+        }
+
+        $templateMgr = $params[0];
+        $pluginBase = $request->getBaseUrl() . '/' . $this->getPluginPath();
+        $launchEndpoint = $request->url(
+            $context->getPath(),
+            'omiIntegration',
+            'launch'
+        );
+
+        $config = json_encode([
+            'launchEndpoint' => $launchEndpoint,
+            'mode' => $launchMode,
+            'label' => __('plugins.generic.studioIntegration.openInStudio'),
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+
+        if ($config === false) {
+            return false;
+        }
+
+        $templateMgr->addHeader(
+            'studioIntegrationConfig',
+            '<script>window.OMI_STUDIO_INTEGRATION=' . $config . ';</script>',
+            ['contexts' => ['backend']]
+        );
+        $templateMgr->addJavaScript(
+            'studioIntegrationLauncher',
+            $pluginBase . '/js/studioIntegration.js',
+            ['contexts' => ['backend']]
+        );
+        $templateMgr->addStyleSheet(
+            'studioIntegrationLauncher',
+            $pluginBase . '/css/studioIntegration.css',
+            ['contexts' => ['backend']]
+        );
+
+        $this->assetsInjected = true;
+        return false;
     }
 
     public function resolveLaunchMode($request, string $requestedMode): string

@@ -3,7 +3,7 @@ $(function() {
     $('#studioIntegrationSettings').pkpHandler('$.pkp.controllers.form.AjaxFormHandler');
 });
 </script>
-<form class="pkp_form" id="studioIntegrationSettings" method="post" action="{url router=PKP\core\PKPApplication::ROUTE_COMPONENT op="manage" category="generic" plugin=$pluginName verb="settings" save=true}">
+<form class="pkp_form" id="studioIntegrationSettings" method="post" action="{url router=$smarty.const.ROUTE_COMPONENT op="manage" category="generic" plugin=$pluginName verb="settings" save=true}">
     {csrf}
     {fbvFormArea id="studioIntegrationSettingsArea"}
         {fbvFormSection title="plugins.generic.studioIntegration.settings.connection"}

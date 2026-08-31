@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version without v prefix, for example 1.2.3'
+        description: 'Release version without v prefix, for example 1.2.4'
         required: true
         type: string
 
@@ -29,7 +29,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Resolve and validate release version
+      - name: Resolve release version
         id: version
         shell: bash
         env:
@@ -45,15 +45,62 @@ jobs:
             echo "Invalid release version: $VERSION" >&2
             exit 1
           fi
-          TAG="v${VERSION}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare PKP version metadata for manual release
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          export RELEASE="${VERSION}.0"
+          export RELEASE_DATE="$(date -u +%Y-%m-%d)"
+          php -r '
+            $path = "version.xml";
+            $xml = simplexml_load_file($path);
+            if ($xml === false) {
+                fwrite(STDERR, "Unable to parse version.xml\n");
+                exit(1);
+            }
+            $xml->release = getenv("RELEASE");
+            $xml->date = getenv("RELEASE_DATE");
+            $dom = dom_import_simplexml($xml)->ownerDocument;
+            $dom->formatOutput = true;
+            if ($dom->save($path) === false) {
+                fwrite(STDERR, "Unable to write version.xml\n");
+                exit(1);
+            }
+          '
+
+      - name: Validate version metadata
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
           OMP_VERSION="$(php -r '$xml = simplexml_load_file("version.xml"); if ($xml === false) exit(2); echo trim((string)$xml->release);')"
           EXPECTED_OMP_VERSION="${VERSION}.0"
           if [[ "$OMP_VERSION" != "$EXPECTED_OMP_VERSION" ]]; then
-            echo "version.xml release is $OMP_VERSION but tag $TAG requires $EXPECTED_OMP_VERSION" >&2
+            echo "version.xml release is $OMP_VERSION but $TAG requires $EXPECTED_OMP_VERSION" >&2
             exit 1
           fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create local release commit for manual release
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add version.xml
+          if ! git diff --cached --quiet; then
+            git commit -m "Release ${TAG}"
+          fi
 
       - name: Lint PHP sources
         shell: bash
@@ -116,6 +163,7 @@ jobs:
         shell: bash
         env:
           PACKAGE: ${{ steps.package.outputs.package }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           for path in \
@@ -126,6 +174,8 @@ jobs:
             unzip -l "dist/${PACKAGE}.zip" | grep -F "$path"
             tar -tzf "dist/${PACKAGE}.tar.gz" | grep -F "$path"
           done
+          unzip -p "dist/${PACKAGE}.zip" studioIntegration/version.xml | grep -F "<release>${VERSION}.0</release>"
+          tar -xOzf "dist/${PACKAGE}.tar.gz" studioIntegration/version.xml | grep -F "<release>${VERSION}.0</release>"
           test -s dist/SHA256SUMS.txt
           test -s dist/MD5SUMS.txt
 
@@ -137,11 +187,11 @@ jobs:
         run: |
           set -euo pipefail
           if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
-            echo "Tag ${TAG} already exists."
-          else
-            git tag "$TAG" "$GITHUB_SHA"
-            git push origin "refs/tags/${TAG}"
+            echo "Tag ${TAG} already exists." >&2
+            exit 1
           fi
+          git tag "$TAG" "$(git rev-parse HEAD)"
+          git push origin "refs/tags/${TAG}"
 
       - name: Publish GitHub Release
         shell: bash

@@ -34,6 +34,9 @@ class StudioIntegrationApiHandler extends Handler
         $resolvedMode = $this->plugin->resolveLaunchMode($request, $requestedMode);
         if ($resolvedMode === 'review') {
             $launchUrl = $this->plugin->createReviewerLaunchUrl($request, $submissionId);
+            if ($launchUrl !== null) {
+                $launchUrl = $this->reviewWorkspaceLaunchUrl($launchUrl);
+            }
         } elseif ($resolvedMode === 'author') {
             $launchUrl = $this->plugin->createLaunchUrl($request, $submissionId, 'author');
         } else {
@@ -58,6 +61,19 @@ class StudioIntegrationApiHandler extends Handler
             ['launchUrl' => $launchUrl, 'mode' => $resolvedMode],
             '0',
             ['launchUrl' => $launchUrl, 'mode' => $resolvedMode]
+        );
+    }
+
+    private function reviewWorkspaceLaunchUrl(string $launchUrl): string
+    {
+        $marker = '/integrations/omp/launch?';
+        if (!str_contains($launchUrl, $marker)) {
+            return $launchUrl;
+        }
+        return str_replace(
+            $marker,
+            '/?review=1&ompReviewLaunch=1&',
+            $launchUrl
         );
     }
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.4 - 2026-08-31
+
+OMP Studio connection and workflow launcher fixes.
+
+### Fixed
+
+- Fixed persistence of the OMP Studio integration settings by passing the plugin name to the Smarty settings template and aligning the settings form lifecycle with the working OJS integration.
+- Added Studio URL validation, normalized URL storage, safe shared-secret generation and bounded token TTL handling.
+- Restored the missing backend Studio launcher on OMP workflow pages by registering the `TemplateManager::display` hook.
+- Added the launcher JavaScript and CSS assets that create the floating “Open in Studio” action on supported workflow, dashboard and reviewer pages.
+- Bound the launcher to the OMP `omiIntegration/launch` endpoint while preserving editor, author and reviewer launch modes.
+
 ## 1.2.3 - 2026-08-29
 
 PKP/OMP 3.5 workflow-compliance hardening.

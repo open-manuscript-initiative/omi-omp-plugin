@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.2.6 - 2026-09-05
+
 ### Added
 
 - Bound each reviewer launch to the single OMP chapter represented by the files granted to that review assignment.
@@ -14,6 +16,13 @@
 ### Fixed
 
 - Restored PKP 3.5-compatible review comments and form-response persistence without calling non-existent repository convenience methods.
+- Verified the complete double-anonymous reviewer workflow, required review form, corrections, separated comments and Studio-to-OMP writeback against a disposable native OMP 3.5 environment.
+
+## 1.2.5 - 2026-08-31
+
+### Fixed
+
+- Routed reviewer-mode launches directly into the Studio peer-review workspace while preserving the signed OMP launch assertion.
 
 ## 1.2.4 - 2026-08-31
 

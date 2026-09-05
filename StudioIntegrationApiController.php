@@ -9,11 +9,14 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request as IlluminateRequest;
 use Illuminate\Support\Facades\Route;
 use PKP\config\Config;
+use PKP\core\Core;
 use PKP\core\PKPBaseController;
 use PKP\db\DAORegistry;
 use PKP\reviewForm\ReviewFormElement;
+use PKP\reviewForm\ReviewFormResponse;
 use PKP\security\Role;
 use PKP\submission\ReviewFilesDAO;
+use PKP\submission\SubmissionComment;
 use PKP\submission\reviewAssignment\ReviewAssignment;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
@@ -60,7 +63,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => Omp35Adapter::PROFILE,
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OMP',
-                'version' => '1.2.3',
+                'version' => '1.2.4',
                 'platform' => 'omp',
             ],
             'context' => (new Omp35Adapter())->mapContext($context, $request),
@@ -101,6 +104,18 @@ class StudioIntegrationApiController extends PKPBaseController
         $adapter = new Omp35Adapter();
         $submission = $adapter->getSubmission($submissionId, $context->getId());
         if (!$submission) return $this->error('submission_not_found', 'Monograph submission not found.', 404);
+        $mappedSubmission = $adapter->mapSubmission($submission);
+        if (($claims['actorMode'] ?? '') === 'review') {
+            $reviewAssignment = $this->reviewAssignmentForClaims($claims, $submissionId);
+            $componentId = (int)($claims['component']['externalId'] ?? 0);
+            if (!$reviewAssignment || $componentId < 1) {
+                return $this->error('review_component_forbidden', 'The signed review does not identify one authorized OMP chapter.', 403);
+            }
+            $mappedSubmission = $adapter->mapReviewArticle($submission, $componentId);
+            if ($mappedSubmission === null) {
+                return $this->error('review_component_not_found', 'The assigned OMP chapter is not available.', 404);
+            }
+        }
 
         $actor = null;
         $actorId = (int)($claims['actor']['externalId'] ?? 0);
@@ -120,7 +135,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => Omp35Adapter::PROFILE,
             'installationId' => $this->plugin->getInstallationId($context->getId(), Application::get()->getRequest()),
             'context' => $adapter->mapContext($context, Application::get()->getRequest()),
-            'submission' => $adapter->mapSubmission($submission),
+            'submission' => $mappedSubmission,
             'actor' => $actor,
         ]);
     }
@@ -200,9 +215,14 @@ class StudioIntegrationApiController extends PKPBaseController
             if (!$reviewAssignment) {
                 return $this->error('review_assignment_forbidden', 'The review assignment is not valid for the current OMP review round.', 403);
             }
+            $componentId = (int)($claims['component']['externalId'] ?? 0);
             $files = array_values(array_filter(
                 $files,
-                fn (array $file): bool => $this->reviewFileAllowed($reviewAssignment, (int)($file['externalId'] ?? 0))
+                fn (array $file): bool => $this->reviewFileAllowed(
+                    $reviewAssignment,
+                    (int)($file['externalId'] ?? 0),
+                    $componentId
+                )
             ));
         }
 
@@ -297,7 +317,8 @@ class StudioIntegrationApiController extends PKPBaseController
                 return $this->error('insufficient_scope', 'Reviewer file access requires review.files.read.', 403);
             }
             $reviewAssignment = $this->reviewAssignmentForClaims($claims, $submissionId);
-            if (!$reviewAssignment || !$this->reviewFileAllowed($reviewAssignment, $submissionFileId)) {
+            $componentId = (int)($claims['component']['externalId'] ?? 0);
+            if (!$reviewAssignment || !$this->reviewFileAllowed($reviewAssignment, $submissionFileId, $componentId)) {
                 return $this->error('file_not_available_for_review', 'This file is not available to the current review assignment.', 403);
             }
         }
@@ -369,10 +390,10 @@ class StudioIntegrationApiController extends PKPBaseController
         }
 
         foreach ($validatedFormResponses as $elementId => $value) {
-            Repo::reviewAssignment()->saveReviewFormResponse($reviewAssignment, $elementId, $value);
+            $this->saveReviewFormResponse($reviewAssignment, $elementId, $value);
         }
-        if ($authorComment !== '') Repo::reviewAssignment()->saveReviewComment($reviewAssignment, $authorComment, true);
-        if ($editorComment !== '') Repo::reviewAssignment()->saveReviewComment($reviewAssignment, $editorComment, false);
+        if ($authorComment !== '') $this->saveReviewComment($reviewAssignment, $authorComment, true);
+        if ($editorComment !== '') $this->saveReviewComment($reviewAssignment, $editorComment, false);
 
         return response()->json([
             'protocol' => 'omi-integration/1',
@@ -536,15 +557,105 @@ class StudioIntegrationApiController extends PKPBaseController
         $reviewRoundDao = DAORegistry::getDAO('ReviewRoundDAO');
         $currentRound = $reviewRoundDao->getCurrentRoundBySubmissionId($submissionId, (int)$assignment->getStageId());
         if ((int)$assignment->getRound() !== (int)$currentRound) return null;
+        if (!$this->reviewComponentMatchesClaims($claims, $submission, $assignment)) return null;
         return $assignment;
     }
 
-    private function reviewFileAllowed(ReviewAssignment $reviewAssignment, int $submissionFileId): bool
+    private function reviewComponentMatchesClaims(array $claims, object $submission, ReviewAssignment $assignment): bool
+    {
+        $componentId = (int)($claims['component']['externalId'] ?? 0);
+        if ($componentId < 1) return false;
+
+        $publication = $submission->getCurrentPublication();
+        if (!$publication) return false;
+        /** @var \APP\monograph\ChapterDAO $chapterDao */
+        $chapterDao = DAORegistry::getDAO('ChapterDAO');
+        if (!$chapterDao->getChapter($componentId, (int)$publication->getId())) return false;
+
+        /** @var ReviewFilesDAO $reviewFilesDao */
+        $reviewFilesDao = DAORegistry::getDAO('ReviewFilesDAO');
+        $chapterIds = [];
+        $files = Repo::submissionFile()->getCollector()
+            ->filterBySubmissionIds([(int)$submission->getId()])
+            ->getMany();
+        foreach ($files as $file) {
+            if (!$reviewFilesDao->check((int)$assignment->getId(), (int)$file->getId())) continue;
+            $chapterId = (int)$file->getData('chapterId');
+            if ($chapterId > 0) $chapterIds[$chapterId] = true;
+        }
+        return count($chapterIds) === 1 && isset($chapterIds[$componentId]);
+    }
+
+    private function reviewFileAllowed(
+        ReviewAssignment $reviewAssignment,
+        int $submissionFileId,
+        int $componentId = 0
+    ): bool
     {
         if ($submissionFileId < 1) return false;
         /** @var ReviewFilesDAO $reviewFilesDao */
         $reviewFilesDao = DAORegistry::getDAO('ReviewFilesDAO');
-        return (bool)$reviewFilesDao->check($reviewAssignment->getId(), $submissionFileId);
+        if (!$reviewFilesDao->check($reviewAssignment->getId(), $submissionFileId)) return false;
+        if ($componentId < 1) return true;
+
+        $file = Repo::submissionFile()->get($submissionFileId, (int)$reviewAssignment->getSubmissionId());
+        return $file && (int)$file->getData('chapterId') === $componentId;
+    }
+
+    private function saveReviewFormResponse(ReviewAssignment $assignment, int $elementId, mixed $value): void
+    {
+        /** @var \PKP\reviewForm\ReviewFormElementDAO $elementDao */
+        $elementDao = DAORegistry::getDAO('ReviewFormElementDAO');
+        /** @var \PKP\reviewForm\ReviewFormResponseDAO $responseDao */
+        $responseDao = DAORegistry::getDAO('ReviewFormResponseDAO');
+        $element = $elementDao->getById($elementId, (int)$assignment->getReviewFormId());
+        if (!($element instanceof ReviewFormElement)) return;
+
+        $response = $responseDao->getReviewFormResponse((int)$assignment->getId(), $elementId)
+            ?? new ReviewFormResponse();
+        $responseType = match ((int)$element->getElementType()) {
+            ReviewFormElement::REVIEW_FORM_ELEMENT_TYPE_CHECKBOXES => 'object',
+            ReviewFormElement::REVIEW_FORM_ELEMENT_TYPE_RADIO_BUTTONS,
+            ReviewFormElement::REVIEW_FORM_ELEMENT_TYPE_DROP_DOWN_BOX => 'int',
+            default => 'string',
+        };
+        $response->setResponseType($responseType);
+        $response->setValue($value);
+        if ($response->getReviewId() !== null && $response->getReviewFormElementId() !== null) {
+            $responseDao->updateObject($response);
+            return;
+        }
+        $response->setReviewId((int)$assignment->getId());
+        $response->setReviewFormElementId($elementId);
+        $responseDao->insertObject($response);
+    }
+
+    private function saveReviewComment(ReviewAssignment $assignment, string $text, bool $viewable): void
+    {
+        /** @var \PKP\submission\SubmissionCommentDAO $commentDao */
+        $commentDao = DAORegistry::getDAO('SubmissionCommentDAO');
+        $comments = $commentDao->getReviewerCommentsByReviewerId(
+            (int)$assignment->getSubmissionId(),
+            (int)$assignment->getReviewerId(),
+            (int)$assignment->getId(),
+            $viewable
+        );
+        $comment = $comments->next() ?? $commentDao->newDataObject();
+        $comment->setCommentType(SubmissionComment::COMMENT_TYPE_PEER_REVIEW);
+        $comment->setRoleId(Role::ROLE_ID_REVIEWER);
+        $comment->setSubmissionId((int)$assignment->getSubmissionId());
+        $comment->setAssocId((int)$assignment->getId());
+        $comment->setAuthorId((int)$assignment->getReviewerId());
+        $comment->setCommentTitle('');
+        $comment->setComments($text);
+        $comment->setViewable($viewable);
+        if ($comment->getId() !== null) {
+            $comment->setDateModified(Core::getCurrentDate());
+            $commentDao->updateObject($comment);
+            return;
+        }
+        $comment->setDatePosted(Core::getCurrentDate());
+        $commentDao->insertObject($comment);
     }
 
     private function authorizeServiceRequest(IlluminateRequest $request, int $contextId): ?JsonResponse

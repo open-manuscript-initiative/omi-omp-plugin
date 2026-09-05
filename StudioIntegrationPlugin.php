@@ -8,6 +8,7 @@ use APP\plugins\generic\studioIntegration\classes\StudioIntegrationSettingsForm;
 use PKP\core\APIRouter;
 use PKP\core\JSONMessage;
 use PKP\core\PKPApplication;
+use PKP\db\DAORegistry;
 use PKP\linkAction\LinkAction;
 use PKP\linkAction\request\AjaxModal;
 use PKP\plugins\GenericPlugin;
@@ -273,6 +274,8 @@ class StudioIntegrationPlugin extends GenericPlugin
             ->getMany()
             ->first();
         if (!($reviewAssignment instanceof ReviewAssignment)) return null;
+        $component = $this->reviewComponentForAssignment($submission, $reviewAssignment);
+        if ($component === null) return null;
 
         $contextId = (int)$context->getId();
         $studioUrl = rtrim(trim((string)$this->getSetting($contextId, 'studioUrl')), '/');
@@ -297,6 +300,7 @@ class StudioIntegrationPlugin extends GenericPlugin
                 'path' => $context->getPath(),
             ],
             'submission' => ['externalId' => (string)$submissionId],
+            'component' => $component,
             'reviewAssignment' => ['externalId' => (string)$reviewAssignment->getId()],
             'actor' => ['externalId' => (string)$user->getId()],
             'actorMode' => 'review',
@@ -322,6 +326,36 @@ class StudioIntegrationPlugin extends GenericPlugin
             return null;
         }
         return $studioUrl . '/integrations/omp/launch?' . http_build_query($token, '', '&', PHP_QUERY_RFC3986);
+    }
+
+    private function reviewComponentForAssignment(object $submission, ReviewAssignment $assignment): ?array
+    {
+        /** @var \PKP\submission\ReviewFilesDAO $reviewFilesDao */
+        $reviewFilesDao = DAORegistry::getDAO('ReviewFilesDAO');
+        $chapterIds = [];
+        $files = Repo::submissionFile()->getCollector()
+            ->filterBySubmissionIds([(int)$submission->getId()])
+            ->getMany();
+        foreach ($files as $file) {
+            if (!$reviewFilesDao->check((int)$assignment->getId(), (int)$file->getId())) continue;
+            $chapterId = (int)$file->getData('chapterId');
+            if ($chapterId > 0) $chapterIds[$chapterId] = true;
+        }
+        if (count($chapterIds) !== 1) return null;
+
+        $chapterId = (int)array_key_first($chapterIds);
+        $publication = $submission->getCurrentPublication();
+        if (!$publication) return null;
+        /** @var \APP\monograph\ChapterDAO $chapterDao */
+        $chapterDao = DAORegistry::getDAO('ChapterDAO');
+        $chapter = $chapterDao->getChapter($chapterId, (int)$publication->getId());
+        if (!$chapter) return null;
+
+        return [
+            'externalId' => (string)$chapterId,
+            'type' => 'article',
+            'title' => (string)$chapter->getTitle((string)$submission->getData('locale')),
+        ];
     }
 
     public function getInstallationId(int $contextId, $request): string

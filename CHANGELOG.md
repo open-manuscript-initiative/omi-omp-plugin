@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Bound each reviewer launch to the single OMP chapter represented by the files granted to that review assignment.
+- Projected the assigned chapter to Studio as a standalone article without parent-monograph or sibling-chapter metadata.
+
+### Security
+
+- Constrained reviewer file listing and download to both the native PKP review-file grant and the chapter signed into the launch assertion.
+
+### Fixed
+
+- Restored PKP 3.5-compatible review comments and form-response persistence without calling non-existent repository convenience methods.
+
 ## 1.2.4 - 2026-08-31
 
 OMP Studio connection and workflow launcher fixes.

@@ -14,8 +14,8 @@ OMP is the system of record. The integration must not replace OMP workflow state
 | Submission files | OMP/PKP | Read/write through `Repo::submissionFile()` and PKP associations |
 | Review assignment | OMP/PKP | Concrete `ReviewAssignment`; reviewer launch uses current incomplete assignment |
 | Reviewer-visible files | OMP/PKP | Filtered with `ReviewFilesDAO` |
-| Review form | OMP/PKP | Native form definition and `Repo::reviewAssignment()->saveReviewFormResponse()` |
-| Reviewer comments | OMP/PKP | Native public/private review comments |
+| Review form | OMP/PKP | Native form definition and PKP review-form response DAO persistence |
+| Reviewer comments | OMP/PKP | Native public/private `SubmissionCommentDAO` persistence |
 | Reviewer attachment | OMP/PKP | `SUBMISSION_FILE_REVIEW_ATTACHMENT` + `ASSOC_TYPE_REVIEW_ASSIGNMENT` |
 | Author revision | OMP/PKP | Current round only; review revision file + `ASSOC_TYPE_REVIEW_ROUND` |
 | Reviewer recommendation | OMP capability | Never synthesize OJS IDs; use only native options if host supports them |
@@ -36,7 +36,7 @@ This prevents Round 1 data from being written into Round 2 and vice versa.
 
 ## Reviewer anonymity
 
-Reviewer launches do not receive contributor or reviewer-identity scopes. Reviewer source files are filtered against the concrete review assignment through the native PKP `ReviewFilesDAO` boundary. The integration must not infer authorization from filenames, user-supplied IDs or Studio-side state.
+Reviewer launches do not receive contributor or reviewer-identity scopes. A launch is issued only when the assignment's native PKP file grants resolve to exactly one OMP chapter. That chapter ID is signed into the assertion and Studio receives it as a standalone article without parent-monograph, sibling-chapter or contributor metadata. Reviewer source files must pass both the concrete `ReviewAssignment` check through `ReviewFilesDAO` and the signed chapter boundary. The integration must not infer authorization from filenames, user-supplied IDs or Studio-side state.
 
 ## File semantics
 

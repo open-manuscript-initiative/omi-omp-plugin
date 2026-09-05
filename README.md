@@ -40,6 +40,7 @@ Studio must not read the OMP database or private file storage directly.
 - contributor reads for authorized editorial/author contexts;
 - submission-file listing and protected binary transfer;
 - reviewer file access constrained by PKP `ReviewFilesDAO`;
+- reviewer launch and file access bound to one assigned OMP chapter, exposed to Studio as a standalone article;
 - native PKP review-form definition and response persistence;
 - assignment-scoped reviewer attachment upload using `SUBMISSION_FILE_REVIEW_ATTACHMENT` and `ASSOC_TYPE_REVIEW_ASSIGNMENT`;
 - current-review-round author revision upload using `SUBMISSION_FILE_REVIEW_REVISION` or `SUBMISSION_FILE_INTERNAL_REVIEW_REVISION` and `ASSOC_TYPE_REVIEW_ROUND`;
@@ -54,6 +55,8 @@ Capabilities are advertised only when implemented safely.
 The connector preserves monograph semantics and PKP authorization boundaries. In particular:
 
 - reviewer launch is bound to the current incomplete `ReviewAssignment`;
+- a reviewer launch is issued only when its native PKP file grants resolve to exactly one OMP chapter;
+- the reviewer receives only that chapter's article metadata, never the parent monograph or sibling chapters;
 - reviewer reads and writes are bound to the current OMP review stage and round;
 - author revision uploads are rejected for historical review rounds;
 - completed reviewer assignments are read-only for writeback;
@@ -91,7 +94,7 @@ The repository and release package follow the PKP generic-plugin package layout 
 ## Remaining roadmap
 
 - production/publication export;
-- broader component/chapter synchronization;
+- broader editor/author component synchronization beyond the assignment-scoped reviewer flow;
 - native reviewer recommendation support if/when the host OMP version exposes it;
 - automated OMP installation-level integration tests in addition to PHP/package CI.
 

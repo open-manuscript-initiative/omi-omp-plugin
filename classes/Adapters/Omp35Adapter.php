@@ -122,6 +122,15 @@ final class Omp35Adapter
             $genre = $genreId > 0 ? $genreDao->getById($genreId, $contextId) : null;
             $result[] = [
                 'externalId' => (string)$file->getId(),
+                'componentExternalId' => $file->getData('chapterId') !== null
+                    ? (string)$file->getData('chapterId')
+                    : null,
+                'componentId' => $file->getData('chapterId') !== null
+                    ? (string)$file->getData('chapterId')
+                    : null,
+                'chapterExternalId' => $file->getData('chapterId') !== null
+                    ? (string)$file->getData('chapterId')
+                    : null,
                 'name' => (string)($file->getData('originalFileName') ?? $file->getData('name', $submission->getData('locale')) ?? ''),
                 'mediaType' => (string)($file->getData('mimetype') ?? ''),
                 'size' => $file->getData('fileSize'),
@@ -138,6 +147,42 @@ final class Omp35Adapter
             ];
         }
         return $result;
+    }
+
+    public function mapReviewArticle(object $submission, int $chapterId): ?array
+    {
+        $publication = $this->getHydratedCurrentPublication($submission);
+        if (!$publication) return null;
+
+        /** @var \APP\monograph\ChapterDAO $chapterDao */
+        $chapterDao = DAORegistry::getDAO('ChapterDAO');
+        $chapter = $chapterDao->getChapter($chapterId, (int)$publication->getId());
+        if (!$chapter) return null;
+
+        $primaryLocale = (string)$submission->getData('locale');
+        $title = trim((string)$chapter->getTitle($primaryLocale));
+        $subtitle = trim((string)$chapter->getSubtitle($primaryLocale));
+        $abstract = trim((string)$chapter->getAbstract($primaryLocale));
+
+        return [
+            'externalId' => (string)$submission->getId(),
+            'componentExternalId' => (string)$chapterId,
+            'type' => 'article',
+            'status' => $this->mapStage((int)$submission->getData('stageId')),
+            'stageId' => (int)$submission->getData('stageId'),
+            'primaryLocale' => $primaryLocale,
+            'title' => $title !== '' ? [$primaryLocale => $title] : [],
+            'subtitle' => $subtitle !== '' ? [$primaryLocale => $subtitle] : [],
+            'abstract' => $abstract !== '' ? [$primaryLocale => $abstract] : [],
+            'keywords' => [],
+            'metadata' => [],
+            'publicationExternalId' => (string)$publication->getId(),
+            'extensions' => [
+                'org.pkp.omp.reviewArticle' => [
+                    'chapterId' => $chapterId,
+                ],
+            ],
+        ];
     }
 
     private function getHydratedCurrentPublication(object $submission): ?object

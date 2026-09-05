@@ -8,11 +8,15 @@ use APP\plugins\generic\studioIntegration\classes\Core\LaunchToken;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request as IlluminateRequest;
 use Illuminate\Support\Facades\Route;
+use PKP\core\Core;
 use PKP\core\PKPApplication;
 use PKP\core\PKPBaseController;
 use PKP\db\DAORegistry;
 use PKP\file\FileManager;
+use PKP\security\Role;
 use PKP\submission\GenreDAO;
+use PKP\submission\ReviewFilesDAO;
+use PKP\submission\SubmissionComment;
 use PKP\submission\reviewAssignment\ReviewAssignment;
 use PKP\submission\reviewRound\ReviewRound;
 use PKP\submission\reviewRound\ReviewRoundDAO;
@@ -70,7 +74,7 @@ class StudioIntegrationNativeApiController extends PKPBaseController
             'profile' => Omp35Adapter::PROFILE,
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OMP',
-                'version' => '1.2.3',
+                'version' => '1.2.4',
                 'platform' => 'omp',
             ],
             'nativeApis' => [
@@ -334,8 +338,8 @@ class StudioIntegrationNativeApiController extends PKPBaseController
             return $this->error('empty_review_result', 'The review result does not contain writable content.', 400);
         }
 
-        if ($authorComment !== '') Repo::reviewAssignment()->saveReviewComment($assignment, $authorComment, true);
-        if ($editorComment !== '') Repo::reviewAssignment()->saveReviewComment($assignment, $editorComment, false);
+        if ($authorComment !== '') $this->saveReviewComment($assignment, $authorComment, true);
+        if ($editorComment !== '') $this->saveReviewComment($assignment, $editorComment, false);
 
         return response()->json([
             'protocol' => 'omi-integration/1',
@@ -529,8 +533,62 @@ class StudioIntegrationNativeApiController extends PKPBaseController
         $reviewRoundDao = DAORegistry::getDAO('ReviewRoundDAO');
         $currentRound = $reviewRoundDao->getCurrentRoundBySubmissionId($submissionId, (int)$assignment->getStageId());
         if ((int)$assignment->getRound() !== (int)$currentRound) return null;
+        if (!$this->reviewComponentMatchesClaims($claims, $submission, $assignment)) return null;
 
         return $assignment;
+    }
+
+    private function reviewComponentMatchesClaims(array $claims, object $submission, ReviewAssignment $assignment): bool
+    {
+        $componentId = (int)($claims['component']['externalId'] ?? 0);
+        if ($componentId < 1) return false;
+
+        $publication = $submission->getCurrentPublication();
+        if (!$publication) return false;
+        /** @var \APP\monograph\ChapterDAO $chapterDao */
+        $chapterDao = DAORegistry::getDAO('ChapterDAO');
+        if (!$chapterDao->getChapter($componentId, (int)$publication->getId())) return false;
+
+        /** @var ReviewFilesDAO $reviewFilesDao */
+        $reviewFilesDao = DAORegistry::getDAO('ReviewFilesDAO');
+        $chapterIds = [];
+        $files = Repo::submissionFile()->getCollector()
+            ->filterBySubmissionIds([(int)$submission->getId()])
+            ->getMany();
+        foreach ($files as $file) {
+            if (!$reviewFilesDao->check((int)$assignment->getId(), (int)$file->getId())) continue;
+            $chapterId = (int)$file->getData('chapterId');
+            if ($chapterId > 0) $chapterIds[$chapterId] = true;
+        }
+        return count($chapterIds) === 1 && isset($chapterIds[$componentId]);
+    }
+
+    private function saveReviewComment(ReviewAssignment $assignment, string $text, bool $viewable): void
+    {
+        /** @var \PKP\submission\SubmissionCommentDAO $commentDao */
+        $commentDao = DAORegistry::getDAO('SubmissionCommentDAO');
+        $comments = $commentDao->getReviewerCommentsByReviewerId(
+            (int)$assignment->getSubmissionId(),
+            (int)$assignment->getReviewerId(),
+            (int)$assignment->getId(),
+            $viewable
+        );
+        $comment = $comments->next() ?? $commentDao->newDataObject();
+        $comment->setCommentType(SubmissionComment::COMMENT_TYPE_PEER_REVIEW);
+        $comment->setRoleId(Role::ROLE_ID_REVIEWER);
+        $comment->setSubmissionId((int)$assignment->getSubmissionId());
+        $comment->setAssocId((int)$assignment->getId());
+        $comment->setAuthorId((int)$assignment->getReviewerId());
+        $comment->setCommentTitle('');
+        $comment->setComments($text);
+        $comment->setViewable($viewable);
+        if ($comment->getId() !== null) {
+            $comment->setDateModified(Core::getCurrentDate());
+            $commentDao->updateObject($comment);
+            return;
+        }
+        $comment->setDatePosted(Core::getCurrentDate());
+        $commentDao->insertObject($comment);
     }
 
     private function hasScope(array $claims, string $scope): bool

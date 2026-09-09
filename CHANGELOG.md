@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.2.0 — 2026-09-09
+
+### Fixed
+
+- Made the Studio launcher stable across PKP History API navigation, DOM remounts and repeated workflow openings.
+- Consolidated launcher styling into the single `css/studioIntegration.css` source of truth; JavaScript no longer owns visual positioning.
+- Added an explicit launcher instance/version marker so stale or legacy launcher elements are replaced instead of reused.
+- Added cache-busted unified launcher assets for OMP to match the OJS integration behavior.
+
 ## 1.3.1.0 — 2026-09-09
 
 ### Fixed

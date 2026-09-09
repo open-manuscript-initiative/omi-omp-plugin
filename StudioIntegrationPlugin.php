@@ -157,13 +157,13 @@ class StudioIntegrationPlugin extends GenericPlugin
             ['contexts' => ['backend']]
         );
         $templateMgr->addJavaScript(
-            'studioIntegrationLauncher',
-            $pluginBase . '/js/studioIntegration.js',
+            'studioIntegrationLauncher132',
+            $pluginBase . '/js/studioIntegration.js?v=1.3.2',
             ['contexts' => ['backend']]
         );
         $templateMgr->addStyleSheet(
-            'studioIntegrationLauncher',
-            $pluginBase . '/css/studioIntegration.css',
+            'studioIntegrationLauncher132',
+            $pluginBase . '/css/studioIntegration.css?v=1.3.2',
             ['contexts' => ['backend']]
         );
 

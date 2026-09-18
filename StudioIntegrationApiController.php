@@ -316,7 +316,7 @@ class StudioIntegrationApiController extends PKPBaseController
 
                 $existingProofs = [];
                 if ($publicationFormat) {
-                    $existingProofs = Repo::submissionFile()
+                    $proofs = Repo::submissionFile()
                         ->getCollector()
                         ->filterBySubmissionIds([$submissionId])
                         ->filterByFileStages([SubmissionFile::SUBMISSION_FILE_PROOF])
@@ -324,8 +324,10 @@ class StudioIntegrationApiController extends PKPBaseController
                             Application::ASSOC_TYPE_PUBLICATION_FORMAT,
                             [(int)$publicationFormat->getId()]
                         )
-                        ->getMany()
-                        ->all();
+                        ->getMany();
+                    foreach ($proofs as $proof) {
+                        $existingProofs[] = $proof;
+                    }
 
                     foreach ($existingProofs as $proof) {
                         if (

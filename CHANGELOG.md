@@ -8,6 +8,7 @@
 - Added structured affiliation payloads with ROR identifiers while preserving the existing flattened affiliation value for compatibility.
 - Added PKP CRediT role identifiers and degrees to the contributor payload consumed by Studio.
 - Preserved OMP editor/author/reviewer authorization boundaries; reviewer mode still receives no contributor identity data.
+- Grant author launches `contributors.read` for their own accessible submission while requiring the separate `review.identity.read` scope for reviewer discovery.
 
 ## 1.4.0.0 — 2026-09-18
 

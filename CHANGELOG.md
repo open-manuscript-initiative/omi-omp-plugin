@@ -22,6 +22,7 @@
 - Added standalone publication artifact provenance/format tests.
 - Added an OMP authority-boundary controller contract test.
 - Added PHP 8.2/8.3/8.4 CI coverage for the new artifact tests.
+- Advanced the launcher asset/version marker and cache key to 1.4.0 with the plugin release.
 
 ## 1.3.2.0 — 2026-09-09
 

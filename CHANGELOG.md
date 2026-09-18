@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.4.0.0 — 2026-09-18
+
+### Added
+
+- Added editor-authenticated `omi-publication-artifact/1` inspection and transfer for current unpublished OMP 3.5 Production submissions.
+- Added provenance-verified self-contained HTML, JATS XML, print PDF and interactive PDF artifact support.
+- Added `omi-publication-build@0.1.0` verification for manuscript identity, publication-profile digest, exact output bytes, SHA-256, generator identity, optional renderer-input provenance and deterministic build URN.
+- Added granular publication artifact capability discovery and OMP-native authority metadata.
+
+### OMP workflow authority
+
+- Maps each logical Studio output to a stable native OMP Publication Format and `SUBMISSION_FILE_PROOF`.
+- Creates Studio-managed Publication Formats unapproved and unavailable; transferred proofs remain non-viewable.
+- Rejects changed transfers once the native format is approved/available or any proof is viewable, instead of silently overriding an editor's OMP decision.
+- Locks and rechecks the submission/current publication before persistence and never publishes the monograph.
+- Keeps exact retries idempotent and retains prior non-viewable proof history when a build changes.
+
+### Validation
+
+- Added standalone publication artifact provenance/format tests.
+- Added an OMP authority-boundary controller contract test.
+- Added PHP 8.2/8.3/8.4 CI coverage for the new artifact tests.
+
 ## 1.3.2.0 — 2026-09-09
 
 ### Fixed

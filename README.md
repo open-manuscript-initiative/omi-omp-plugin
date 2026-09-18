@@ -46,7 +46,9 @@ Studio must not read the OMP database or private file storage directly.
 - current-review-round author revision upload using `SUBMISSION_FILE_REVIEW_REVISION` or `SUBMISSION_FILE_INTERNAL_REVIEW_REVISION` and `ASSOC_TYPE_REVIEW_ROUND`;
 - review comments with author-visible and editor-only separation;
 - capability discovery for OMP-specific reviewer recommendation support;
-- OMP-native review completion authority retained in OMP.
+- OMP-native review completion authority retained in OMP;
+- provenance-verified Production artifact transfer for HTML, JATS XML, print PDF and interactive PDF;
+- native OMP Publication Format / proof-file persistence without automatic approval, availability, viewability or publication.
 
 Capabilities are advertised only when implemented safely.
 
@@ -93,10 +95,25 @@ The repository and release package follow the PKP generic-plugin package layout 
 
 ## Remaining roadmap
 
-- production/publication export;
 - broader editor/author component synchronization beyond the assignment-scoped reviewer flow;
 - native reviewer recommendation support if/when the host OMP version exposes it;
 - automated OMP installation-level integration tests in addition to PHP/package CI.
+
+## Publication artifacts from Studio (1.4.0)
+
+`POST /api/v1/omi-integration/publication-artifact` accepts provenance-bound
+HTML, JATS XML, print PDF and interactive PDF builds for the current unpublished
+Production version. The plugin verifies the complete
+`omi-publication-build@0.1.0` manifest, exact artifact bytes and SHA-256 digest
+before storing anything.
+
+The OMP mapping deliberately preserves native editorial authority: a new
+Publication Format is unapproved and unavailable, and its proof is not
+viewable. A changed Studio artifact is rejected once the native representation
+has been approved, made available, or made viewable, until an editor reopens it
+in OMP.
+
+See [Publication artifact transfer](docs/publication-artifact-transfer.md).
 
 ## License
 

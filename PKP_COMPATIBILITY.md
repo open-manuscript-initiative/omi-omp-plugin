@@ -22,6 +22,8 @@ OMP is the system of record. The integration must not replace OMP workflow state
 | Review completion | OMP | Integration does not set completion directly |
 | Notifications/event log | OMP | Triggered by native OMP workflow |
 | Publication/production decision | OMP | Not overridden by Studio |
+| Publication Format | OMP | Studio may create a stable digital format only as unapproved/unavailable |
+| Production proof | OMP/PKP | Studio writes `SUBMISSION_FILE_PROOF`; new proofs are never viewable automatically |
 
 ## Review-round isolation
 
@@ -48,11 +50,18 @@ The connector uses PKP file stages and associations rather than generic uploads:
 
 File metadata is validated by `Repo::submissionFile()->validate()` before the native submission-file record is added.
 
+Publication artifacts use `SUBMISSION_FILE_PROOF` +
+`Application::ASSOC_TYPE_PUBLICATION_FORMAT`. Studio-created publication
+formats remain unapproved/unavailable and their proof files remain non-viewable
+until an OMP editor explicitly changes those native states. A changed transfer
+is rejected after native approval/availability/viewability rather than silently
+reversing an editorial decision.
+
 ## API usage policy
 
 The plugin prefers OMP/PKP repository and application services. DAO access is used only where PKP 3.5 itself still exposes the relevant workflow through DAOs, including `ReviewFilesDAO`, `ReviewRoundDAO`, review-form DAOs and `GenreDAO`.
 
-The plugin must not perform direct SQL against OMP tables for integration writes.
+The plugin must not perform direct SQL mutations against OMP tables for integration writes. The publication artifact endpoint uses row locks only for concurrency control; object mutations remain in OMP/PKP repositories and the native Publication Format DAO.
 
 ## Plugin packaging
 
@@ -73,6 +82,9 @@ Before submitting a release to the Plugin Gallery, verify all of the following o
 7. reviewer attachment upload bound to the assignment;
 8. Round 1 → revision → Round 2 isolation;
 9. completed-review write rejection;
-10. uninstall/upgrade behavior and regression check of normal OMP review completion.
+10. provenance-verified HTML/JATS/PDF transfer into an unpublished Production submission, including idempotent retry and changed-build history;
+11. verify that transferred Publication Formats remain unapproved/unavailable and proofs remain non-viewable until native OMP approval;
+12. verify that a changed transfer is rejected after native approval/availability/viewability;
+13. uninstall/upgrade behavior and regression check of normal OMP review completion.
 
 PHP lint/package CI is necessary but does not replace this installation-level OMP integration test.

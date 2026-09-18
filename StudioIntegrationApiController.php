@@ -5,6 +5,11 @@ use APP\core\Application;
 use APP\facades\Repo;
 use APP\plugins\generic\studioIntegration\classes\Adapters\Omp35Adapter;
 use APP\plugins\generic\studioIntegration\classes\Core\LaunchToken;
+use APP\plugins\generic\studioIntegration\classes\Core\PublicationArtifactDocument;
+use APP\submission\Submission;
+use Illuminate\Support\Facades\DB;
+use PKP\plugins\PluginRegistry;
+use PKP\submissionFile\SubmissionFile;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request as IlluminateRequest;
 use Illuminate\Support\Facades\Route;
@@ -51,6 +56,409 @@ class StudioIntegrationApiController extends PKPBaseController
             ->whereNumber('submissionFileId')
             ->name('api.omiIntegration.fileContent');
         Route::post('review-result', $this->reviewResult(...))->name('api.omiIntegration.reviewResult');
+        Route::post('publication-artifact', $this->publicationArtifact(...))
+            ->middleware(['has.user', self::roleAuthorizer([
+                Role::ROLE_ID_MANAGER,
+                Role::ROLE_ID_SITE_ADMIN,
+                Role::ROLE_ID_SUB_EDITOR,
+                Role::ROLE_ID_ASSISTANT,
+            ])])
+            ->name('api.omiIntegration.publicationArtifact');
+    }
+
+    /**
+     * Transfer a provenance-verified publication artifact into the current
+     * unpublished OMP production version.
+     *
+     * OMP remains authoritative. New OMI-managed publication formats are
+     * created unapproved/unavailable and proof files are not viewable. A
+     * changed artifact cannot replace a format that an editor has already
+     * approved, made available, or made viewable in the native OMP workflow.
+     */
+    public function publicationArtifact(IlluminateRequest $input): JsonResponse
+    {
+        $data = $input->validate([
+            'action' => 'required|in:inspect,transfer',
+            'submissionId' => 'required|integer|min:1',
+            'manuscriptId' => 'required|string|max:128',
+            'publicationId' => 'required_if:action,transfer|integer|min:1',
+            'locale' => 'required_if:action,transfer|string|max:32',
+            'genreId' => 'required_if:action,transfer|integer|min:1',
+            'format' => 'required_if:action,transfer|in:html,jats,pdf-print,pdf-interactive',
+            'mediaType' => 'required_if:action,transfer|string|max:128',
+            'fileName' => 'required_if:action,transfer|string|max:255',
+            'artifactBase64' => 'required_if:action,transfer|string|max:90000000',
+            'build' => 'required_if:action,transfer|array',
+            'confirmed' => 'required_if:action,transfer|accepted',
+        ]);
+
+        $request = Application::get()->getRequest();
+        $context = $request->getContext();
+        $user = $request->getUser();
+        if (!$context || !$user || !$this->plugin->getEnabled($context->getId())) {
+            return $this->error(
+                'editor_required',
+                'An authenticated editor in an enabled press is required.',
+                403
+            );
+        }
+
+        $submissionId = (int)$data['submissionId'];
+        $authorize = function () use ($context, $user, $submissionId, $data) {
+            $submission = Repo::submission()->get($submissionId);
+            if (
+                !$submission ||
+                (int)$submission->getData('contextId') !== (int)$context->getId()
+            ) {
+                abort(404, 'Submission not found.');
+            }
+
+            $stages = Repo::user()->getAccessibleWorkflowStages(
+                $user->getId(),
+                $context->getId(),
+                $submission
+            );
+            if (!array_intersect(
+                $stages[WORKFLOW_STAGE_ID_PRODUCTION] ?? [],
+                [
+                    Role::ROLE_ID_MANAGER,
+                    Role::ROLE_ID_SITE_ADMIN,
+                    Role::ROLE_ID_SUB_EDITOR,
+                    Role::ROLE_ID_ASSISTANT,
+                ]
+            )) {
+                abort(
+                    403,
+                    'Editorial access to this monograph in Production is required.'
+                );
+            }
+
+            $publication = Repo::publication()->get(
+                (int)$submission->getData('currentPublicationId')
+            );
+            if (
+                (int)$submission->getData('stageId') !== WORKFLOW_STAGE_ID_PRODUCTION ||
+                !$publication ||
+                (int)$publication->getData('status') !== Submission::STATUS_QUEUED ||
+                (
+                    isset($data['publicationId']) &&
+                    (int)$data['publicationId'] !== (int)$publication->getId()
+                )
+            ) {
+                abort(
+                    409,
+                    'Inspect the current unpublished Production version before transferring a publication artifact.'
+                );
+            }
+
+            return [$submission, $publication];
+        };
+
+        [$submission, $publication] = $authorize();
+
+        $reader = PluginRegistry::getPlugin('generic', 'htmlmonographfileplugin');
+        $htmlAvailable = $reader && $reader->getEnabled($context->getId());
+
+        $genres = [];
+        $enabledGenres = DAORegistry::getDAO('GenreDAO')
+            ->getEnabledByContextId($context->getId());
+        while ($genre = $enabledGenres->next()) {
+            if (!$genre->getDependent() && !$genre->getSupplementary()) {
+                $genres[] = [
+                    'id' => (int)$genre->getId(),
+                    'label' => $genre->getLocalizedName(),
+                ];
+            }
+        }
+
+        $locales = array_values($context->getSupportedSubmissionLocales());
+
+        if ($data['action'] === 'inspect') {
+            return response()->json([
+                'protocol' => PublicationArtifactDocument::PROTOCOL,
+                'submissionId' => $submissionId,
+                'publicationId' => (int)$publication->getId(),
+                'title' => $publication->getLocalizedData('title'),
+                'locales' => $locales,
+                'genres' => $genres,
+                'formats' => PublicationArtifactDocument::formats((bool)$htmlAvailable),
+                'provenance' => [
+                    'required' => true,
+                    'model' => PublicationArtifactDocument::BUILD_MODEL,
+                    'version' => PublicationArtifactDocument::BUILD_VERSION,
+                    'digest' => 'sha256',
+                ],
+                'authority' => [
+                    'representation' => 'publicationFormat',
+                    'formatApprovedByDefault' => false,
+                    'formatAvailableByDefault' => false,
+                    'proofViewableByDefault' => false,
+                ],
+                'published' => false,
+            ]);
+        }
+
+        if (
+            !in_array($data['locale'], $locales, true) ||
+            !in_array((int)$data['genreId'], array_column($genres, 'id'), true)
+        ) {
+            return $this->error(
+                'invalid_options',
+                'Choose an enabled publication language and file genre.',
+                422
+            );
+        }
+
+        if ($data['format'] === 'html' && !$htmlAvailable) {
+            return $this->error(
+                'html_reader_required',
+                'Enable the OMP HTML Monograph File plugin before transferring HTML.',
+                409
+            );
+        }
+
+        try {
+            $artifact = PublicationArtifactDocument::validateTransfer(
+                (string)$data['format'],
+                (string)$data['mediaType'],
+                (string)$data['fileName'],
+                (string)$data['artifactBase64'],
+                (array)$data['build'],
+                (string)$data['manuscriptId']
+            );
+        } catch (\InvalidArgumentException $e) {
+            return $this->error(
+                'invalid_publication_artifact',
+                $e->getMessage(),
+                422
+            );
+        }
+
+        $storedName =
+            'omi-' .
+            preg_replace('/[^a-z0-9]+/i', '-', (string)$data['format']) .
+            '-' .
+            $artifact['sha256'] .
+            '.' .
+            $artifact['extension'];
+        $path = PublicationArtifactDocument::path(
+            (string)$data['manuscriptId'],
+            (string)$data['locale'],
+            (string)$data['format']
+        );
+
+        $temporary = tmpfile();
+        if (!$temporary) {
+            return $this->error(
+                'storage_error',
+                'Unable to allocate temporary storage.',
+                500
+            );
+        }
+
+        $fileId = null;
+        $used = false;
+        try {
+            $bytes = $artifact['bytes'];
+            if (fwrite($temporary, $bytes) !== strlen($bytes)) {
+                throw new \RuntimeException('Unable to write publication artifact.');
+            }
+
+            $dir = Repo::submissionFile()->getSubmissionDir(
+                $context->getId(),
+                $submissionId
+            );
+            $fileId = app()->get('file')->add(
+                stream_get_meta_data($temporary)['uri'],
+                $dir .
+                    '/' .
+                    bin2hex(random_bytes(16)) .
+                    '.' .
+                    $artifact['extension']
+            );
+
+            $receipt = DB::transaction(function () use (
+                $authorize,
+                $submissionId,
+                $data,
+                $path,
+                $storedName,
+                $fileId,
+                $context,
+                $user,
+                $artifact,
+                &$used
+            ) {
+                DB::table('submissions')
+                    ->where('submission_id', $submissionId)
+                    ->lockForUpdate()
+                    ->first();
+                DB::table('publications')
+                    ->where('publication_id', (int)$data['publicationId'])
+                    ->lockForUpdate()
+                    ->first();
+
+                [$submission, $publication] = $authorize();
+
+                $publicationFormatDao = Application::getRepresentationDAO();
+                $publicationFormat = null;
+                foreach (
+                    $publicationFormatDao->getByPublicationId(
+                        (int)$publication->getId(),
+                        (int)$context->getId()
+                    ) as $candidate
+                ) {
+                    if ((string)$candidate->getData('urlPath') === $path) {
+                        $publicationFormat = $candidate;
+                        break;
+                    }
+                }
+
+                $existingProofs = [];
+                if ($publicationFormat) {
+                    $existingProofs = Repo::submissionFile()
+                        ->getCollector()
+                        ->filterBySubmissionIds([$submissionId])
+                        ->filterByFileStages([SubmissionFile::SUBMISSION_FILE_PROOF])
+                        ->filterByAssoc(
+                            Application::ASSOC_TYPE_PUBLICATION_FORMAT,
+                            [(int)$publicationFormat->getId()]
+                        )
+                        ->getMany()
+                        ->all();
+
+                    foreach ($existingProofs as $proof) {
+                        if (
+                            (string)$proof->getData('name', (string)$data['locale']) ===
+                            $storedName
+                        ) {
+                            return [
+                                'publicationFormatId' => (int)$publicationFormat->getId(),
+                                'submissionFileId' => (int)$proof->getId(),
+                                'unchanged' => true,
+                                'formatApproved' => (bool)$publicationFormat->getIsApproved(),
+                                'formatAvailable' => (bool)$publicationFormat->getIsAvailable(),
+                                'proofViewable' => (bool)$proof->getData('viewable'),
+                            ];
+                        }
+                    }
+
+                    $hasViewableProof = false;
+                    foreach ($existingProofs as $proof) {
+                        if ((bool)$proof->getData('viewable')) {
+                            $hasViewableProof = true;
+                            break;
+                        }
+                    }
+
+                    if (
+                        (bool)$publicationFormat->getIsApproved() ||
+                        (bool)$publicationFormat->getIsAvailable() ||
+                        $hasViewableProof
+                    ) {
+                        abort(
+                            409,
+                            'The native OMP publication format is already approved, available, or viewable. Reopen it in OMP before replacing its proof.'
+                        );
+                    }
+                } else {
+                    $publicationFormat = $publicationFormatDao->newDataObject();
+                    $publicationFormat->setData(
+                        'publicationId',
+                        (int)$publication->getId()
+                    );
+                    $publicationFormat->setPhysicalFormat(false);
+                    $publicationFormat->setIsApproved(false);
+                    $publicationFormat->setIsAvailable(false);
+                    $publicationFormat->setEntryKey('DA');
+                    $publicationFormat->setData(
+                        'name',
+                        $artifact['label'],
+                        (string)$data['locale']
+                    );
+                    $publicationFormat->setData('urlPath', $path);
+                    $publicationFormat->setSequence(REALLY_BIG_NUMBER);
+                    $publicationFormatId =
+                        $publicationFormatDao->insertObject($publicationFormat);
+                    $publicationFormat = $publicationFormatDao->getById(
+                        (int)$publicationFormatId,
+                        (int)$publication->getId(),
+                        (int)$context->getId()
+                    );
+                }
+
+                if (!$publicationFormat) {
+                    abort(500, 'Unable to create the OMP publication format.');
+                }
+
+                $params = [
+                    'fileId' => $fileId,
+                    'submissionId' => $submissionId,
+                    'uploaderUserId' => (int)$user->getId(),
+                    'submissionLocale' => (string)$submission->getData('locale'),
+                    'fileStage' => SubmissionFile::SUBMISSION_FILE_PROOF,
+                    'genreId' => (int)$data['genreId'],
+                    'assocType' => Application::ASSOC_TYPE_PUBLICATION_FORMAT,
+                    'assocId' => (int)$publicationFormat->getId(),
+                    'mimetype' => $artifact['mediaType'],
+                    'viewable' => false,
+                    'directSalesPrice' => 0,
+                    'salesType' => 'openAccess',
+                    'name' => [
+                        (string)$data['locale'] => $storedName,
+                        (string)$submission->getData('locale') => $storedName,
+                    ],
+                ];
+
+                $errors = Repo::submissionFile()->validate(
+                    null,
+                    $params,
+                    $context->getSupportedSubmissionMetadataLocales(),
+                    $submission->getData('locale')
+                );
+                if ($errors) {
+                    abort(
+                        422,
+                        'The publication proof file failed OMP validation.'
+                    );
+                }
+
+                $submissionFileId = Repo::submissionFile()->add(
+                    Repo::submissionFile()->newDataObject($params)
+                );
+                $used = true;
+
+                return [
+                    'publicationFormatId' => (int)$publicationFormat->getId(),
+                    'submissionFileId' => (int)$submissionFileId,
+                    'unchanged' => false,
+                    'formatApproved' => false,
+                    'formatAvailable' => false,
+                    'proofViewable' => false,
+                ];
+            });
+
+            return response()->json(array_merge($receipt, [
+                'protocol' => PublicationArtifactDocument::PROTOCOL,
+                'submissionId' => $submissionId,
+                'publicationId' => (int)$data['publicationId'],
+                'format' => $data['format'],
+                'mediaType' => $artifact['mediaType'],
+                'artifactFileName' => $artifact['fileName'],
+                'sha256' => $artifact['sha256'],
+                'buildId' => $artifact['buildId'],
+                'provenanceVerified' => true,
+                'published' => false,
+            ]));
+        } catch (\Throwable $e) {
+            $used = false;
+            throw $e;
+        } finally {
+            fclose($temporary);
+            if ($fileId !== null && !$used) {
+                app()->get('file')->delete($fileId);
+            }
+        }
     }
 
     /** Public submission requirements; creation remains protected by native PKP author authorization. */
@@ -91,12 +499,15 @@ class StudioIntegrationApiController extends PKPBaseController
         $context = $request->getContext();
         if (!$context) return $this->error('context_required', 'A press context is required.', 400);
 
+        $reader = PluginRegistry::getPlugin('generic', 'htmlmonographfileplugin');
+        $htmlAvailable = $reader && $reader->getEnabled($context->getId());
+
         return response()->json([
             'protocol' => 'omi-integration/1',
             'profile' => Omp35Adapter::PROFILE,
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OMP',
-                'version' => '1.3.0',
+                'version' => '1.4.0',
                 'platform' => 'omp',
             ],
             'context' => (new Omp35Adapter())->mapContext($context, $request),
@@ -117,10 +528,30 @@ class StudioIntegrationApiController extends PKPBaseController
                 'review.form.write',
                 'review.forms.native',
                 'review.files.scoped',
+                'editor.publication-artifact.write',
+                'publication.html.write',
+                'publication.jats.write',
+                'publication.pdf.write',
+                'publication.provenance.verify',
+            ],
+            'publicationArtifacts' => [
+                'protocol' => PublicationArtifactDocument::PROTOCOL,
+                'provenance' => [
+                    'required' => true,
+                    'model' => PublicationArtifactDocument::BUILD_MODEL,
+                    'version' => PublicationArtifactDocument::BUILD_VERSION,
+                    'digest' => 'sha256',
+                ],
+                'formats' => PublicationArtifactDocument::formats((bool)$htmlAvailable),
+                'authority' => [
+                    'representation' => 'publicationFormat',
+                    'formatApprovedByDefault' => false,
+                    'formatAvailableByDefault' => false,
+                    'proofViewableByDefault' => false,
+                ],
             ],
             'plannedCapabilities' => [
                 'review.recommendations.native',
-                'publication.export',
             ],
         ]);
     }

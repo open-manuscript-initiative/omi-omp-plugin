@@ -37,7 +37,7 @@ Studio must not read the OMP database or private file storage directly.
 - signed, short-lived launch assertions;
 - role-scoped editor, author and reviewer access;
 - press and monograph metadata reads;
-- contributor reads for authorized editorial/author contexts;
+- contributor reads for authorized editorial/author contexts, including preferred public name, structured affiliations/ROR, biography, competing interests, publication-list visibility and CRediT roles;
 - submission-file listing and protected binary transfer;
 - reviewer file access constrained by PKP `ReviewFilesDAO`;
 - reviewer launch and file access bound to one assigned OMP chapter, exposed to Studio as a standalone article;

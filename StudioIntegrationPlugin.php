@@ -223,6 +223,7 @@ class StudioIntegrationPlugin extends GenericPlugin
             ]
             : [
                 'metadata.read',
+                'contributors.read',
                 'files.read',
                 'author.revision.write',
             ];

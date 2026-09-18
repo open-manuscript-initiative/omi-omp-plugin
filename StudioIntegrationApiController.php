@@ -509,7 +509,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => Omp35Adapter::PROFILE,
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OMP',
-                'version' => '1.4.0',
+                'version' => '1.4.1',
                 'platform' => 'omp',
             ],
             'context' => (new Omp35Adapter())->mapContext($context, $request),
@@ -630,7 +630,7 @@ class StudioIntegrationApiController extends PKPBaseController
         $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
         if ($authorized instanceof JsonResponse) return $authorized;
         [$claims, $submissionId, $context] = $authorized;
-        if (!$this->hasAnyScope($claims, ['review.identity.read', 'contributors.read'])) {
+        if (!$this->hasScope($claims, 'review.identity.read')) {
             return $this->error('insufficient_scope', 'The signed assertion does not grant access to reviewer identities.', 403, ['required' => 'review.identity.read']);
         }
 

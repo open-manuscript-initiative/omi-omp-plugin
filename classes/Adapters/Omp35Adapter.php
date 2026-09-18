@@ -110,7 +110,9 @@ final class Omp35Adapter
                 'primaryContact' => (bool)$author->getPrimaryContact(),
                 'includeInBrowse' => (bool)($author->getData('includeInBrowse') ?? true),
                 'creditRoles' => $this->normalizeCreditRoles(
-                    $author->getData('creditRoles')
+                    method_exists($author, 'getCreditRoles')
+                        ? $author->getCreditRoles()
+                        : $author->getData('creditRoles')
                 ),
                 'isEditor' => method_exists($author, 'getIsEditor') ? (bool)$author->getIsEditor() : false,
                 'identifiers' => $orcid !== '' ? [['scheme' => 'orcid', 'value' => $orcid]] : [],

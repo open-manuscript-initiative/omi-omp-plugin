@@ -509,7 +509,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => Omp35Adapter::PROFILE,
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OMP',
-                'version' => '1.4.0',
+                'version' => '1.4.1',
                 'platform' => 'omp',
             ],
             'context' => (new Omp35Adapter())->mapContext($context, $request),

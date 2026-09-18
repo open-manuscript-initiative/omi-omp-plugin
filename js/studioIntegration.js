@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.3.2';
+  var VERSION = '1.4.0';
   var GLOBAL_KEY = '__OMI_STUDIO_LAUNCHER__';
   var LAUNCHER_ID = 'omi-studio-launcher';
 

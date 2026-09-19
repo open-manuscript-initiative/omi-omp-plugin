@@ -30,9 +30,9 @@ use PKP\submissionFile\SubmissionFile;
  * OMP-specific API operations whose semantics differ from OJS.
  *
  * These routes are deliberately implemented against OMP/PKP 3.5 repository
- * services. In particular, OMP currently reports
- * Application::hasCustomizableReviewerRecommendation() === false, so this
- * controller never invents OJS recommendation IDs.
+ * services. OMP 3.5.0 patch releases differ in whether
+ * hasCustomizableReviewerRecommendation() exists on APP\core\Application,
+ * so capability detection is feature-gated and defaults to false.
  */
 class StudioIntegrationNativeApiController extends PKPBaseController
 {
@@ -88,7 +88,7 @@ class StudioIntegrationNativeApiController extends PKPBaseController
             ],
             'nativeApis' => [
                 'reviewRecommendations' => [
-                    'supported' => Application::get()->hasCustomizableReviewerRecommendation(),
+                    'supported' => $this->supportsCustomizableReviewerRecommendations(),
                     'authority' => 'APP\\core\\Application::hasCustomizableReviewerRecommendation',
                 ],
                 'reviewAttachments' => [
@@ -129,7 +129,7 @@ class StudioIntegrationNativeApiController extends PKPBaseController
             return $this->error('review_assignment_forbidden', 'The review assignment is not valid for the current OMP review round.', 403);
         }
 
-        $recommendationsSupported = Application::get()->hasCustomizableReviewerRecommendation();
+        $recommendationsSupported = $this->supportsCustomizableReviewerRecommendations();
         $recommendationOptions = $recommendationsSupported
             ? Repo::reviewerRecommendation()->getRecommendationOptions(
                 context: $context,
@@ -504,7 +504,7 @@ class StudioIntegrationNativeApiController extends PKPBaseController
         $recommendation = $illuminateRequest->input('reviewerRecommendationExternalId');
         $recommendationId = null;
         if ($recommendation !== null && $recommendation !== '') {
-            if (!Application::get()->hasCustomizableReviewerRecommendation()) {
+            if (!$this->supportsCustomizableReviewerRecommendations()) {
                 return $this->error(
                     'review_recommendations_not_supported',
                     'This OMP installation does not support customizable reviewer recommendations.',
@@ -862,6 +862,14 @@ class StudioIntegrationNativeApiController extends PKPBaseController
         }
         $comment->setDatePosted(Core::getCurrentDate());
         $commentDao->insertObject($comment);
+    }
+
+    private function supportsCustomizableReviewerRecommendations(): bool
+    {
+        $application = Application::get();
+
+        return method_exists($application, 'hasCustomizableReviewerRecommendation')
+            && $application->hasCustomizableReviewerRecommendation();
     }
 
     private function authorizeServiceRequest(

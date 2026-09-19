@@ -95,9 +95,13 @@ class StudioIntegrationPlugin extends GenericPlugin
     {
         require_once($this->getPluginPath() . '/StudioIntegrationApiController.php');
         require_once($this->getPluginPath() . '/StudioIntegrationNativeApiController.php');
+
+        // PKP 3.5 rejects duplicate plugin API handler paths. Both the legacy
+        // and OMP-native route sets intentionally live under /omi-integration,
+        // so register one controller with APIRouter and let it compose the
+        // native route set inside the same Laravel route group.
         $apiRouter->registerPluginApiControllers([
             new StudioIntegrationApiController($this),
-            new StudioIntegrationNativeApiController($this),
         ]);
         return Hook::CONTINUE;
     }

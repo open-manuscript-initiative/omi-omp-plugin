@@ -11,7 +11,7 @@ OMP is the system of record. The integration must not replace OMP workflow state
 | Press configuration | OMP | Read through OMP context objects |
 | Submission identity/state | OMP | Read through `Repo::submission()` |
 | Contributors | OMP | Read through publication/contributor repositories |
-| Submission files | OMP/PKP | Read/write through `Repo::submissionFile()` and PKP associations |
+| Submission files | OMP/PKP | Read/write through `Repo::submissionFile()` and PKP associations; author reads use native author-only assigned file stages |
 | Review assignment | OMP/PKP | Concrete `ReviewAssignment`; reviewer launch uses current incomplete assignment |
 | Reviewer-visible files | OMP/PKP | Filtered with `ReviewFilesDAO` |
 | Review form | OMP/PKP | Native form definition and PKP review-form response DAO persistence |
@@ -40,6 +40,17 @@ This prevents Round 1 data from being written into Round 2 and vice versa.
 
 Reviewer launches do not receive contributor or reviewer-identity scopes. A launch is issued only when the assignment's native PKP file grants resolve to exactly one OMP chapter. That chapter ID is signed into the assertion and Studio receives it as a standalone article without parent-monograph, sibling-chapter or contributor metadata. Reviewer source files must pass both the concrete `ReviewAssignment` check through `ReviewFilesDAO` and the signed chapter boundary. The integration must not infer authorization from filenames, user-supplied IDs or Studio-side state.
 
+## Author file privacy
+
+Author launch assertions are least-privilege even when the same OMP account
+also holds editor or manager roles. The integration reads the actor's native
+workflow-stage assignments, discards every non-author role, and delegates the
+remaining stage set to `Repo::submissionFile()->getAssignedFileStages(...,
+SUBMISSION_FILE_ACCESS_READ)`. Both file listings and direct binary downloads
+apply the resulting allowlist server-side. Reviewer-only, editorial-only,
+dependent and other non-author file stages therefore cannot be reached by
+changing a file identifier in Studio.
+
 ## File semantics
 
 The connector uses PKP file stages and associations rather than generic uploads:
@@ -56,6 +67,15 @@ formats remain unapproved/unavailable and their proof files remain non-viewable
 until an OMP editor explicitly changes those native states. A changed transfer
 is rejected after native approval/availability/viewability rather than silently
 reversing an editorial decision.
+
+## API route registration
+
+PKP 3.5 accepts only one plugin API controller for a given handler path. The
+plugin therefore registers exactly one `omi-integration` controller with
+`APIRouter`. The OMP-native controller contributes its routes to that active
+route group instead of registering a second handler. This preserves the
+existing `/api/v1/omi-integration/*` URLs without relying on duplicate route
+registration.
 
 ## API usage policy
 

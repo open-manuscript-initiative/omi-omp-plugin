@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.4.2.0 — 2026-09-19
+
+### Security
+
+- Restrict author-mode file listings and binary downloads to the file stages exposed by PKP's native author workflow assignments.
+- Strip editorial roles from dual-role accounts when resolving an author launch, preventing author assertions from inheriting editor-only file access.
+- Continue rejecting cross-submission file identifiers and keep reviewer-only/review file stages outside the author-visible response.
+
+### Fixed
+
+- Register only one `omi-integration` API controller with PKP 3.5 `APIRouter`; the OMP-native route set is composed into that controller's route group.
+- Preserve all existing `/api/v1/omi-integration/*` native endpoint URLs while avoiding PKP's duplicate-handler exception.
+- Align the native platform-capability implementation version with the plugin release.
+
+### Validation
+
+- Add CI contracts for single-handler registration, native route preservation, author file-stage filtering and direct-download enforcement.
+
 ## 1.4.1.0 — 2026-09-19
 
 ### Added

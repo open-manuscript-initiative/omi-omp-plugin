@@ -11,6 +11,7 @@ Security fixes are provided for the latest released OMP 3.5.x-compatible plugin 
 - Launch assertions are short-lived HMAC-SHA256 signed tokens scoped by actor role, press and submission.
 - Reviewer access is bound to a concrete current `ReviewAssignment`.
 - Reviewer-visible source files are checked with PKP `ReviewFilesDAO`.
+- Author-mode file lists and downloads are limited to PKP file stages derived from the signed author's native workflow assignments; non-author roles on the same account are stripped before resolving file visibility.
 - Review forms and comments are written through PKP review-assignment services.
 - Reviewer-returned files and author revisions are persisted using PKP submission-file stages and associations.
 - Author revision writes are restricted to the submission's current review stage and current round.

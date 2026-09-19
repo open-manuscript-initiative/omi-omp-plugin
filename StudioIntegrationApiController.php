@@ -20,6 +20,7 @@ use PKP\db\DAORegistry;
 use PKP\reviewForm\ReviewFormElement;
 use PKP\reviewForm\ReviewFormResponse;
 use PKP\security\Role;
+use PKP\security\authorization\SubmissionFileAccessPolicy;
 use PKP\submission\ReviewFilesDAO;
 use PKP\submission\SubmissionComment;
 use PKP\submission\reviewAssignment\ReviewAssignment;
@@ -64,6 +65,12 @@ class StudioIntegrationApiController extends PKPBaseController
                 Role::ROLE_ID_ASSISTANT,
             ])])
             ->name('api.omiIntegration.publicationArtifact');
+
+        // Keep all existing /omi-integration native URLs while satisfying the
+        // PKP 3.5 requirement that a plugin registers each handler path once.
+        // The native controller contributes routes to this already-active route
+        // group but is not independently registered with APIRouter.
+        (new StudioIntegrationNativeApiController($this->plugin))->getGroupRoutes();
     }
 
     /**
@@ -509,7 +516,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => Omp35Adapter::PROFILE,
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OMP',
-                'version' => '1.4.1',
+                'version' => '1.4.2',
                 'platform' => 'omp',
             ],
             'context' => (new Omp35Adapter())->mapContext($context, $request),
@@ -690,6 +697,27 @@ class StudioIntegrationApiController extends PKPBaseController
                     $componentId
                 )
             ));
+        } elseif (($claims['actorMode'] ?? '') === 'author') {
+            $allowedFileStages = $this->authorReadableFileStages(
+                $claims,
+                $submission,
+                $context
+            );
+            if ($allowedFileStages === null) {
+                return $this->error(
+                    'author_file_access_forbidden',
+                    'The signed author is not assigned to this monograph workflow.',
+                    403
+                );
+            }
+            $files = array_values(array_filter(
+                $files,
+                static fn (array $file): bool => in_array(
+                    (int)($file['stage'] ?? 0),
+                    $allowedFileStages,
+                    true
+                )
+            ));
         }
 
         $files = array_map(function (array $file): array {
@@ -793,6 +821,31 @@ class StudioIntegrationApiController extends PKPBaseController
         if (!$submissionFile || (int)$submissionFile->getData('submissionId') !== $submissionId) {
             return $this->error('file_not_found', 'Submission file not found.', 404);
         }
+
+        if (($claims['actorMode'] ?? '') === 'author') {
+            $context = Application::get()->getRequest()->getContext();
+            $submission = $context
+                ? Repo::submission()->get($submissionId, $context->getId())
+                : null;
+            $allowedFileStages = $submission && $context
+                ? $this->authorReadableFileStages($claims, $submission, $context)
+                : null;
+            if (
+                $allowedFileStages === null ||
+                !in_array(
+                    (int)$submissionFile->getData('fileStage'),
+                    $allowedFileStages,
+                    true
+                )
+            ) {
+                return $this->error(
+                    'file_not_available_for_author',
+                    'This file is not available to the signed author in the native OMP workflow.',
+                    403
+                );
+            }
+        }
+
         $fileId = (int)$submissionFile->getData('fileId');
         $storedFile = $fileId > 0 ? app()->get('file')->get($fileId) : null;
         if (!$storedFile || empty($storedFile->path)) return $this->error('file_not_found', 'Stored file content not found.', 404);
@@ -1003,6 +1056,48 @@ class StudioIntegrationApiController extends PKPBaseController
         $text = strip_tags($text);
         $text = preg_replace('/\s+/u', ' ', $text) ?? $text;
         return trim($text);
+    }
+
+    /**
+     * Resolve the native OMP/PKP file stages visible to a signed author.
+     *
+     * The launch actor may also hold editorial roles. Author mode deliberately
+     * strips every non-author stage role before delegating to PKP's
+     * Repository::getAssignedFileStages(), so a dual-role account cannot use an
+     * author assertion to read editorial or review-only files.
+     *
+     * @return array<int>|null Null when the signed actor has no author workflow
+     * assignment for this submission.
+     */
+    private function authorReadableFileStages(
+        array $claims,
+        object $submission,
+        object $context
+    ): ?array {
+        if (($claims['actorMode'] ?? '') !== 'author') return null;
+
+        $actorId = (int)($claims['actor']['externalId'] ?? 0);
+        if ($actorId < 1) return null;
+
+        $stageAssignments = Repo::user()->getAccessibleWorkflowStages(
+            $actorId,
+            (int)$context->getId(),
+            $submission
+        );
+
+        $authorAssignments = [];
+        foreach ($stageAssignments as $stageId => $roles) {
+            if (!is_array($roles) || !in_array(Role::ROLE_ID_AUTHOR, $roles, true)) {
+                continue;
+            }
+            $authorAssignments[(int)$stageId] = [Role::ROLE_ID_AUTHOR];
+        }
+        if ($authorAssignments === []) return null;
+
+        return array_values(array_unique(Repo::submissionFile()->getAssignedFileStages(
+            $authorAssignments,
+            SubmissionFileAccessPolicy::SUBMISSION_FILE_ACCESS_READ
+        )));
     }
 
     private function reviewAssignmentForClaims(array $claims, int $submissionId): ?ReviewAssignment

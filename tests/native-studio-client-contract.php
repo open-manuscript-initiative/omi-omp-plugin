@@ -26,6 +26,8 @@ foreach ([
     "private function reviewRoundAllowsAuthorRevision",
     "Decision::PENDING_REVISIONS",
     "Decision::PENDING_REVISIONS_INTERNAL",
+    "source_file_forbidden",
+    "SubmissionFileAccessPolicy::SUBMISSION_FILE_ACCESS_READ",
     "reviewFormResponses",
     "private function validateReviewFormResponses",
     "private function saveReviewFormResponse",

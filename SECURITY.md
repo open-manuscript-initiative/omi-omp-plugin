@@ -18,6 +18,19 @@ Security fixes are provided for the latest released OMP 3.5.x-compatible plugin 
 - Completed review assignments reject integration writeback.
 - OMP review completion, notifications, event logging and access-invitation finalization remain in the native OMP workflow.
 
+## Studio service writeback
+
+Service writeback requests are authenticated with the installation identifier,
+a bounded Unix timestamp and an HMAC-SHA256 signature over the method, request
+path and exact request-body digest. OMP then re-resolves all supplied
+submission, actor, review-assignment and review-round identifiers before any
+write. A valid service signature is not itself a workflow authorization grant.
+
+Reviewer writes are limited to the current assignment and latest round. Author
+revision writes require an author workflow assignment plus a native OMP
+revision-request decision in the latest review round. Studio never marks an OMP
+review complete.
+
 ## Secrets
 
 The integration shared secret must be high entropy, stored server-side and never committed to source control, embedded in frontend bundles, exposed in URLs or written to application logs. Production installations must use HTTPS.

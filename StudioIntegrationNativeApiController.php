@@ -2,6 +2,7 @@
 namespace APP\plugins\generic\studioIntegration;
 
 use APP\core\Application;
+use APP\decision\Decision;
 use APP\facades\Repo;
 use APP\plugins\generic\studioIntegration\classes\Adapters\Omp35Adapter;
 use APP\plugins\generic\studioIntegration\classes\Core\LaunchToken;
@@ -13,7 +14,10 @@ use PKP\core\PKPApplication;
 use PKP\core\PKPBaseController;
 use PKP\db\DAORegistry;
 use PKP\file\FileManager;
+use PKP\reviewForm\ReviewFormElement;
+use PKP\reviewForm\ReviewFormResponse;
 use PKP\security\Role;
+use PKP\security\authorization\SubmissionFileAccessPolicy;
 use PKP\submission\GenreDAO;
 use PKP\submission\ReviewFilesDAO;
 use PKP\submission\SubmissionComment;
@@ -32,6 +36,9 @@ use PKP\submissionFile\SubmissionFile;
  */
 class StudioIntegrationNativeApiController extends PKPBaseController
 {
+    private const SERVICE_CLOCK_SKEW_SECONDS = 300;
+    private const MAX_SERVICE_FILE_BYTES = 25 * 1024 * 1024;
+
     public function __construct(private StudioIntegrationPlugin $plugin)
     {
     }
@@ -52,6 +59,8 @@ class StudioIntegrationNativeApiController extends PKPBaseController
             ->name('api.omiIntegration.platformCapabilities');
         Route::get('review-context', $this->reviewContext(...))
             ->name('api.omiIntegration.reviewContext');
+        Route::get('author-context', $this->authorContext(...))
+            ->name('api.omiIntegration.authorContext');
         Route::get('review-attachments', $this->reviewAttachments(...))
             ->name('api.omiIntegration.reviewAttachments');
         Route::post('review-attachments', $this->uploadReviewAttachment(...))
@@ -74,7 +83,7 @@ class StudioIntegrationNativeApiController extends PKPBaseController
             'profile' => Omp35Adapter::PROFILE,
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OMP',
-                'version' => '1.4.2',
+                'version' => '1.5.0',
                 'platform' => 'omp',
             ],
             'nativeApis' => [
@@ -93,6 +102,13 @@ class StudioIntegrationNativeApiController extends PKPBaseController
                     'internalFileStage' => SubmissionFile::SUBMISSION_FILE_INTERNAL_REVIEW_REVISION,
                     'association' => 'reviewRound',
                     'currentRoundOnly' => true,
+                ],
+                'serviceWriteback' => [
+                    'supported' => true,
+                    'authentication' => 'omi-hmac-sha256',
+                    'reviewAttachments' => 'review-attachments',
+                    'authorRevisions' => 'author-revisions',
+                    'reviewResult' => 'review-result-v2',
                 ],
             ],
         ]);
@@ -149,6 +165,69 @@ class StudioIntegrationNativeApiController extends PKPBaseController
         ]);
     }
 
+    public function authorContext(IlluminateRequest $illuminateRequest): JsonResponse
+    {
+        $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
+        if ($authorized instanceof JsonResponse) return $authorized;
+        [$claims, $submissionId, $context] = $authorized;
+
+        if (($claims['actorMode'] ?? '') !== 'author' || !$this->hasScope($claims, 'author.revision.write')) {
+            return $this->error('insufficient_scope', 'Author context access requires author.revision.write.', 403);
+        }
+
+        $submission = Repo::submission()->get($submissionId, $context->getId());
+        if (!$submission) {
+            return $this->error('submission_not_found', 'Monograph submission not found.', 404);
+        }
+
+        $actorId = (int)($claims['actor']['externalId'] ?? 0);
+        if (!$this->authorAssignedToCurrentStage($actorId, $submission, $context)) {
+            return $this->error(
+                'author_not_assigned',
+                'The signed author is not assigned to the current OMP workflow stage.',
+                403
+            );
+        }
+
+        $stageId = (int)$submission->getData('stageId');
+        if (!in_array($stageId, Application::get()->getReviewStages(), true)) {
+            return response()->json([
+                'protocol' => 'omi-integration/1',
+                'profile' => Omp35Adapter::PROFILE,
+                'submissionExternalId' => (string)$submissionId,
+                'writable' => false,
+                'reason' => 'not_in_review_stage',
+                'reviewRoundExternalId' => null,
+            ]);
+        }
+
+        /** @var ReviewRoundDAO $reviewRoundDao */
+        $reviewRoundDao = DAORegistry::getDAO('ReviewRoundDAO');
+        $reviewRound = $reviewRoundDao->getLastReviewRoundBySubmissionId($submissionId, $stageId);
+        if (!($reviewRound instanceof ReviewRound)) {
+            return response()->json([
+                'protocol' => 'omi-integration/1',
+                'profile' => Omp35Adapter::PROFILE,
+                'submissionExternalId' => (string)$submissionId,
+                'writable' => false,
+                'reason' => 'review_round_unavailable',
+                'reviewRoundExternalId' => null,
+            ]);
+        }
+
+        $writable = $this->reviewRoundAllowsAuthorRevision($reviewRound);
+        return response()->json([
+            'protocol' => 'omi-integration/1',
+            'profile' => Omp35Adapter::PROFILE,
+            'submissionExternalId' => (string)$submissionId,
+            'writable' => $writable,
+            'reason' => $writable ? null : 'revision_not_requested',
+            'reviewRoundExternalId' => (string)$reviewRound->getId(),
+            'round' => (int)$reviewRound->getRound(),
+            'stageId' => $stageId,
+        ]);
+    }
+
     public function reviewAttachments(IlluminateRequest $illuminateRequest): JsonResponse
     {
         $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
@@ -188,23 +267,59 @@ class StudioIntegrationNativeApiController extends PKPBaseController
 
     public function uploadReviewAttachment(IlluminateRequest $illuminateRequest): JsonResponse
     {
-        $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
-        if ($authorized instanceof JsonResponse) return $authorized;
-        [$claims, $submissionId, $context] = $authorized;
+        $serviceMode = trim((string)$illuminateRequest->header('X-OMI-Installation', '')) !== '';
+        if ($serviceMode) {
+            $context = Application::get()->getRequest()->getContext();
+            if (!$context) return $this->error('context_required', 'A press context is required.', 400);
+            $serviceError = $this->authorizeServiceRequest($illuminateRequest, (int)$context->getId());
+            if ($serviceError) return $serviceError;
 
-        if (($claims['actorMode'] ?? '') !== 'review' || !$this->hasScope($claims, 'review.revision.write')) {
-            return $this->error('insufficient_scope', 'Reviewer attachment upload requires review.revision.write.', 403);
+            $submissionId = (int)$illuminateRequest->input('submissionExternalId', 0);
+            $reviewerId = (int)$illuminateRequest->input('actorExternalId', 0);
+            $assignmentId = (int)$illuminateRequest->input('reviewAssignmentExternalId', 0);
+            $reviewRoundId = (int)$illuminateRequest->input('reviewRoundExternalId', 0);
+            if ($submissionId < 1 || $reviewerId < 1 || $assignmentId < 1 || $reviewRoundId < 1) {
+                return $this->error(
+                    'invalid_review_attachment_context',
+                    'Service writeback requires submissionExternalId, actorExternalId, reviewAssignmentExternalId and reviewRoundExternalId.',
+                    400
+                );
+            }
+            $assignment = $this->reviewAssignmentForServiceWrite(
+                $submissionId,
+                $assignmentId,
+                $reviewerId,
+                $reviewRoundId
+            );
+            if (!$assignment) {
+                return $this->error(
+                    'review_assignment_forbidden',
+                    'The requested review assignment is not writable in the current OMP review round.',
+                    403
+                );
+            }
+            $submission = Repo::submission()->get($submissionId, $context->getId());
+            if (!$submission) return $this->error('submission_not_found', 'Monograph submission not found.', 404);
+            $uploaderId = $reviewerId;
+        } else {
+            $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
+            if ($authorized instanceof JsonResponse) return $authorized;
+            [$claims, $submissionId, $context] = $authorized;
+            if (($claims['actorMode'] ?? '') !== 'review' || !$this->hasScope($claims, 'review.revision.write')) {
+                return $this->error('insufficient_scope', 'Reviewer attachment upload requires review.revision.write.', 403);
+            }
+            $assignment = $this->reviewAssignmentForClaims($claims, $submissionId);
+            if (!$assignment) {
+                return $this->error('review_assignment_forbidden', 'The review assignment is not valid for the current OMP review round.', 403);
+            }
+            $submission = Repo::submission()->get($submissionId, $context->getId());
+            if (!$submission) return $this->error('submission_not_found', 'Monograph submission not found.', 404);
+            $uploaderId = (int)($claims['actor']['externalId'] ?? 0);
         }
-        $assignment = $this->reviewAssignmentForClaims($claims, $submissionId);
-        if (!$assignment) {
-            return $this->error('review_assignment_forbidden', 'The review assignment is not valid for the current OMP review round.', 403);
-        }
+
         if ($assignment->getDateCompleted()) {
             return $this->error('review_already_completed', 'A completed review assignment can no longer receive reviewer attachments.', 409);
         }
-
-        $submission = Repo::submission()->get($submissionId, $context->getId());
-        if (!$submission) return $this->error('submission_not_found', 'Monograph submission not found.', 404);
 
         $genreId = $this->resolveGenreId($illuminateRequest, $submissionId, $context->getId());
         if ($genreId instanceof JsonResponse) return $genreId;
@@ -212,7 +327,7 @@ class StudioIntegrationNativeApiController extends PKPBaseController
         return $this->storeUploadedSubmissionFile(
             $illuminateRequest,
             $submission,
-            (int)($claims['actor']['externalId'] ?? 0),
+            $uploaderId,
             SubmissionFile::SUBMISSION_FILE_REVIEW_ATTACHMENT,
             PKPApplication::ASSOC_TYPE_REVIEW_ASSIGNMENT,
             $assignment->getId(),
@@ -223,12 +338,42 @@ class StudioIntegrationNativeApiController extends PKPBaseController
 
     public function uploadAuthorRevision(IlluminateRequest $illuminateRequest): JsonResponse
     {
-        $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
-        if ($authorized instanceof JsonResponse) return $authorized;
-        [$claims, $submissionId, $context] = $authorized;
+        $serviceMode = trim((string)$illuminateRequest->header('X-OMI-Installation', '')) !== '';
+        if ($serviceMode) {
+            $context = Application::get()->getRequest()->getContext();
+            if (!$context) return $this->error('context_required', 'A press context is required.', 400);
+            $serviceError = $this->authorizeServiceRequest($illuminateRequest, (int)$context->getId());
+            if ($serviceError) return $serviceError;
 
-        if (($claims['actorMode'] ?? '') !== 'author' || !$this->hasScope($claims, 'author.revision.write')) {
-            return $this->error('insufficient_scope', 'Author revision upload requires author.revision.write.', 403);
+            $submissionId = (int)$illuminateRequest->input('submissionExternalId', 0);
+            $authorId = (int)$illuminateRequest->input('actorExternalId', 0);
+            if ($submissionId < 1 || $authorId < 1) {
+                return $this->error(
+                    'invalid_author_revision_context',
+                    'Service writeback requires submissionExternalId and actorExternalId.',
+                    400
+                );
+            }
+            $submission = Repo::submission()->get($submissionId, $context->getId());
+            if (!$submission) return $this->error('submission_not_found', 'Monograph submission not found.', 404);
+        } else {
+            $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
+            if ($authorized instanceof JsonResponse) return $authorized;
+            [$claims, $submissionId, $context] = $authorized;
+            if (($claims['actorMode'] ?? '') !== 'author' || !$this->hasScope($claims, 'author.revision.write')) {
+                return $this->error('insufficient_scope', 'Author revision upload requires author.revision.write.', 403);
+            }
+            $submission = Repo::submission()->get($submissionId, $context->getId());
+            if (!$submission) return $this->error('submission_not_found', 'Monograph submission not found.', 404);
+            $authorId = (int)($claims['actor']['externalId'] ?? 0);
+        }
+
+        if (!$this->authorAssignedToCurrentStage($authorId, $submission, $context)) {
+            return $this->error(
+                'author_revision_forbidden',
+                'The author is not assigned to the current OMP workflow stage.',
+                403
+            );
         }
 
         $roundId = (int)$illuminateRequest->input('reviewRoundExternalId', 0);
@@ -247,21 +392,44 @@ class StudioIntegrationNativeApiController extends PKPBaseController
         if (!in_array($stageId, Application::get()->getReviewStages(), true)) {
             return $this->error('invalid_review_round_stage', 'The requested round is not an OMP review-stage round.', 400);
         }
-
-        $submission = Repo::submission()->get($submissionId, $context->getId());
-        if (!$submission) return $this->error('submission_not_found', 'Monograph submission not found.', 404);
         if ((int)$submission->getData('stageId') !== $stageId) {
             return $this->error('review_round_not_current_stage', 'Author revisions may only be uploaded to the current OMP review stage.', 409);
         }
-        $currentRound = $reviewRoundDao->getCurrentRoundBySubmissionId($submissionId, $stageId);
-        if ((int)$reviewRound->getRound() !== (int)$currentRound) {
+
+        $latestRound = $reviewRoundDao->getLastReviewRoundBySubmissionId($submissionId, $stageId);
+        if (
+            !($latestRound instanceof ReviewRound) ||
+            (int)$latestRound->getId() !== $roundId ||
+            (int)$latestRound->getRound() !== (int)$reviewRound->getRound()
+        ) {
             return $this->error('review_round_not_current', 'Author revisions may only be uploaded to the current OMP review round.', 409);
+        }
+        if (!$this->reviewRoundAllowsAuthorRevision($reviewRound)) {
+            return $this->error(
+                'author_revision_not_requested',
+                'OMP has not opened the current review round for author revision upload.',
+                409
+            );
         }
 
         $sourceId = (int)$illuminateRequest->input('sourceSubmissionFileExternalId', 0);
         $sourceFile = $sourceId > 0 ? Repo::submissionFile()->get($sourceId, $submissionId) : null;
         if ($sourceId > 0 && !$sourceFile) {
             return $this->error('source_file_not_found', 'The source submission file does not belong to this monograph.', 404);
+        }
+        if ($sourceFile) {
+            $readableStages = $this->authorReadableFileStages(
+                $authorId,
+                $submission,
+                $context
+            );
+            if (!in_array((int)$sourceFile->getData('fileStage'), $readableStages, true)) {
+                return $this->error(
+                    'source_file_forbidden',
+                    'The source file is not visible to this author in the native OMP workflow.',
+                    403
+                );
+            }
         }
 
         $genreId = $this->resolveGenreId($illuminateRequest, $submissionId, $context->getId(), $sourceFile);
@@ -274,7 +442,7 @@ class StudioIntegrationNativeApiController extends PKPBaseController
         return $this->storeUploadedSubmissionFile(
             $illuminateRequest,
             $submission,
-            (int)($claims['actor']['externalId'] ?? 0),
+            $authorId,
             $fileStage,
             PKPApplication::ASSOC_TYPE_REVIEW_ROUND,
             $roundId,
@@ -285,22 +453,56 @@ class StudioIntegrationNativeApiController extends PKPBaseController
 
     public function reviewResultV2(IlluminateRequest $illuminateRequest): JsonResponse
     {
-        $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
-        if ($authorized instanceof JsonResponse) return $authorized;
-        [$claims, $submissionId, $context] = $authorized;
+        $serviceMode = trim((string)$illuminateRequest->header('X-OMI-Installation', '')) !== '';
+        if ($serviceMode) {
+            $context = Application::get()->getRequest()->getContext();
+            if (!$context) return $this->error('context_required', 'A press context is required.', 400);
+            $serviceError = $this->authorizeServiceRequest($illuminateRequest, (int)$context->getId());
+            if ($serviceError) return $serviceError;
 
-        if (($claims['actorMode'] ?? '') !== 'review' || !$this->hasScope($claims, 'review.response.write')) {
-            return $this->error('insufficient_scope', 'Review response writeback requires review.response.write.', 403);
+            $submissionId = (int)$illuminateRequest->input('submissionExternalId', 0);
+            $reviewerId = (int)$illuminateRequest->input('actorExternalId', 0);
+            $assignmentId = (int)$illuminateRequest->input('reviewAssignmentExternalId', 0);
+            $reviewRoundId = (int)$illuminateRequest->input('reviewRoundExternalId', 0);
+            if ($submissionId < 1 || $reviewerId < 1 || $assignmentId < 1 || $reviewRoundId < 1) {
+                return $this->error(
+                    'invalid_review_result_context',
+                    'Service writeback requires submissionExternalId, actorExternalId, reviewAssignmentExternalId and reviewRoundExternalId.',
+                    400
+                );
+            }
+            $assignment = $this->reviewAssignmentForServiceWrite(
+                $submissionId,
+                $assignmentId,
+                $reviewerId,
+                $reviewRoundId
+            );
+            if (!$assignment) {
+                return $this->error(
+                    'review_assignment_forbidden',
+                    'The requested review assignment is not writable in the current OMP review round.',
+                    403
+                );
+            }
+        } else {
+            $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
+            if ($authorized instanceof JsonResponse) return $authorized;
+            [$claims, $submissionId, $context] = $authorized;
+            if (($claims['actorMode'] ?? '') !== 'review' || !$this->hasScope($claims, 'review.response.write')) {
+                return $this->error('insufficient_scope', 'Review response writeback requires review.response.write.', 403);
+            }
+            $assignment = $this->reviewAssignmentForClaims($claims, $submissionId);
+            if (!$assignment) {
+                return $this->error('review_assignment_forbidden', 'The review assignment is not valid for the current OMP review round.', 403);
+            }
         }
-        $assignment = $this->reviewAssignmentForClaims($claims, $submissionId);
-        if (!$assignment) {
-            return $this->error('review_assignment_forbidden', 'The review assignment is not valid for the current OMP review round.', 403);
-        }
+
         if ($assignment->getDateCompleted()) {
             return $this->error('review_already_completed', 'The review assignment has already been completed in OMP.', 409);
         }
 
         $recommendation = $illuminateRequest->input('reviewerRecommendationExternalId');
+        $recommendationId = null;
         if ($recommendation !== null && $recommendation !== '') {
             if (!Application::get()->hasCustomizableReviewerRecommendation()) {
                 return $this->error(
@@ -320,7 +522,6 @@ class StudioIntegrationNativeApiController extends PKPBaseController
             if (!array_key_exists($recommendationId, $options)) {
                 return $this->error('invalid_reviewer_recommendation', 'The reviewer recommendation is not available for this OMP review assignment.', 400);
             }
-            Repo::reviewAssignment()->edit($assignment, ['reviewerRecommendationId' => $recommendationId]);
         }
 
         $legacyRecommendation = trim((string)$illuminateRequest->input('recommendation', ''));
@@ -332,12 +533,33 @@ class StudioIntegrationNativeApiController extends PKPBaseController
             );
         }
 
+        $formResponses = $illuminateRequest->input('reviewFormResponses', []);
+        if (!is_array($formResponses)) {
+            return $this->error('invalid_review_form_responses', 'Review form responses must be an array.', 400);
+        }
+        $validatedFormResponses = $this->validateReviewFormResponses($assignment, $formResponses);
+        if ($validatedFormResponses instanceof JsonResponse) return $validatedFormResponses;
+
         $authorComment = trim((string)$illuminateRequest->input('authorAndEditorComment', ''));
         $editorComment = trim((string)$illuminateRequest->input('editorOnlyComment', ''));
-        if ($authorComment === '' && $editorComment === '' && ($recommendation === null || $recommendation === '')) {
+        if (
+            $authorComment === '' &&
+            $editorComment === '' &&
+            ($recommendation === null || $recommendation === '') &&
+            $validatedFormResponses === []
+        ) {
             return $this->error('empty_review_result', 'The review result does not contain writable content.', 400);
         }
 
+        if ($recommendationId !== null) {
+            Repo::reviewAssignment()->edit(
+                $assignment,
+                ['reviewerRecommendationId' => $recommendationId]
+            );
+        }
+        foreach ($validatedFormResponses as $elementId => $value) {
+            $this->saveReviewFormResponse($assignment, $elementId, $value);
+        }
         if ($authorComment !== '') $this->saveReviewComment($assignment, $authorComment, true);
         if ($editorComment !== '') $this->saveReviewComment($assignment, $editorComment, false);
 
@@ -347,6 +569,7 @@ class StudioIntegrationNativeApiController extends PKPBaseController
             'submissionExternalId' => (string)$submissionId,
             'reviewAssignmentExternalId' => (string)$assignment->getId(),
             'reviewRecommendationWritten' => $recommendation !== null && $recommendation !== '',
+            'reviewFormResponsesWritten' => count($validatedFormResponses),
             'written' => true,
             'reviewCompleted' => false,
             'completionAuthority' => 'OMP reviewer workflow',
@@ -363,15 +586,66 @@ class StudioIntegrationNativeApiController extends PKPBaseController
         int $genreId,
         ?object $sourceFile
     ): JsonResponse {
-        $upload = $request->file('file');
-        if (!$upload || !$upload->isValid()) {
-            return $this->error('file_required', 'A valid multipart file field named file is required.', 400);
-        }
         if ($uploaderUserId < 1 || !Repo::user()->get($uploaderUserId)) {
             return $this->error('invalid_uploader', 'The signed assertion does not identify a valid OMP user.', 403);
         }
 
-        $originalName = trim((string)$upload->getClientOriginalName());
+        $temporary = null;
+        $upload = $request->file('file');
+        if ($upload && $upload->isValid()) {
+            $originalName = trim((string)$upload->getClientOriginalName());
+            $realPath = $upload->getRealPath();
+            if ($realPath === false) {
+                return $this->error('upload_unavailable', 'The uploaded temporary file is not available.', 400);
+            }
+        } else {
+            $originalNameValue = $request->input('fileName');
+            $base64Value = $request->input('contentBase64');
+            if (!is_string($originalNameValue) || !is_string($base64Value)) {
+                return $this->error(
+                    'file_required',
+                    'Supply either a valid multipart file field named file or fileName plus contentBase64.',
+                    400
+                );
+            }
+
+            $originalName = trim($originalNameValue);
+            if (
+                $originalName === '' ||
+                strlen($originalName) > 255 ||
+                $originalName === '.' ||
+                $originalName === '..' ||
+                str_contains($originalName, "\0") ||
+                str_contains($originalName, '/') ||
+                str_contains($originalName, '\\') ||
+                preg_match('/[\x00-\x1F\x7F]/', $originalName)
+            ) {
+                return $this->error('invalid_file_name', 'The workflow file name is invalid.', 422);
+            }
+
+            if (strlen($base64Value) > (int)(ceil(self::MAX_SERVICE_FILE_BYTES / 3) * 4) + 8) {
+                return $this->error('file_too_large', 'The workflow file exceeds the 25 MB transfer limit.', 413);
+            }
+            $bytes = base64_decode($base64Value, true);
+            if ($bytes === false || $bytes === '') {
+                return $this->error('invalid_file_content', 'The workflow file content is not valid Base64.', 422);
+            }
+            if (strlen($bytes) > self::MAX_SERVICE_FILE_BYTES) {
+                return $this->error('file_too_large', 'The workflow file exceeds the 25 MB transfer limit.', 413);
+            }
+
+            $temporary = tmpfile();
+            if (!$temporary || fwrite($temporary, $bytes) !== strlen($bytes)) {
+                if (is_resource($temporary)) fclose($temporary);
+                return $this->error('upload_unavailable', 'OMP could not prepare the workflow file for storage.', 500);
+            }
+            $realPath = (string)(stream_get_meta_data($temporary)['uri'] ?? '');
+            if ($realPath === '') {
+                fclose($temporary);
+                return $this->error('upload_unavailable', 'The workflow file temporary path is unavailable.', 500);
+            }
+        }
+
         if ($originalName === '') $originalName = 'open-manuscript-revision';
 
         $fileManager = new FileManager();
@@ -381,15 +655,14 @@ class StudioIntegrationNativeApiController extends PKPBaseController
             (int)$submission->getId()
         );
         $targetName = uniqid('', true) . ($extension !== '' ? '.' . $extension : '');
-        $realPath = $upload->getRealPath();
-        if ($realPath === false) {
-            return $this->error('upload_unavailable', 'The uploaded temporary file is not available.', 400);
-        }
 
         try {
             $fileId = app()->get('file')->add($realPath, $submissionDir . '/' . $targetName);
         } catch (\Throwable) {
+            if (is_resource($temporary)) fclose($temporary);
             return $this->error('file_storage_failed', 'OMP could not store the uploaded file.', 500);
+        } finally {
+            if (is_resource($temporary)) fclose($temporary);
         }
 
         $locale = (string)$submission->getData('locale');
@@ -589,6 +862,404 @@ class StudioIntegrationNativeApiController extends PKPBaseController
         }
         $comment->setDatePosted(Core::getCurrentDate());
         $commentDao->insertObject($comment);
+    }
+
+    private function authorizeServiceRequest(
+        IlluminateRequest $request,
+        int $contextId
+    ): ?JsonResponse {
+        $installation = trim((string)$request->header('X-OMI-Installation', ''));
+        $timestamp = trim((string)$request->header('X-OMI-Timestamp', ''));
+        $signature = trim((string)$request->header('X-OMI-Signature', ''));
+        if ($installation === '' || !ctype_digit($timestamp) || $signature === '') {
+            return $this->error(
+                'service_authentication_required',
+                'Signed OMI service authentication is required.',
+                401
+            );
+        }
+        if (abs(time() - (int)$timestamp) > self::SERVICE_CLOCK_SKEW_SECONDS) {
+            return $this->error(
+                'service_assertion_expired',
+                'The OMI service assertion is outside the allowed clock window.',
+                401
+            );
+        }
+
+        $expectedInstallation = $this->plugin->getInstallationId(
+            $contextId,
+            Application::get()->getRequest()
+        );
+        if (!hash_equals($expectedInstallation, $installation)) {
+            return $this->error(
+                'invalid_installation',
+                'The OMI installation identifier does not match this press.',
+                401
+            );
+        }
+
+        $secret = (string)$this->plugin->getSetting($contextId, 'sharedSecret');
+        if ($secret === '') {
+            return $this->error(
+                'integration_not_configured',
+                'The integration shared secret is not configured.',
+                503
+            );
+        }
+
+        $body = (string)$request->getContent();
+        $canonical =
+            $timestamp . "\n" .
+            strtoupper($request->getMethod()) . "\n" .
+            $request->getPathInfo() . "\n" .
+            hash('sha256', $body);
+        $expected = rtrim(
+            strtr(
+                base64_encode(hash_hmac('sha256', $canonical, $secret, true)),
+                '+/',
+                '-_'
+            ),
+            '='
+        );
+        if (!hash_equals($expected, $signature)) {
+            return $this->error(
+                'invalid_service_signature',
+                'The OMI service signature is invalid.',
+                401
+            );
+        }
+        return null;
+    }
+
+    private function reviewAssignmentForServiceWrite(
+        int $submissionId,
+        int $assignmentId,
+        int $reviewerId,
+        int $reviewRoundId
+    ): ?ReviewAssignment {
+        $assignment = Repo::reviewAssignment()->get($assignmentId, $submissionId);
+        if (!($assignment instanceof ReviewAssignment)) return null;
+        if (
+            (int)$assignment->getSubmissionId() !== $submissionId ||
+            (int)$assignment->getReviewerId() !== $reviewerId ||
+            (int)$assignment->getReviewRoundId() !== $reviewRoundId ||
+            $assignment->getCancelled() ||
+            $assignment->getDeclined()
+        ) {
+            return null;
+        }
+
+        $submission = Repo::submission()->get($submissionId);
+        if (
+            !$submission ||
+            (int)$submission->getData('stageId') !== (int)$assignment->getStageId()
+        ) {
+            return null;
+        }
+
+        /** @var ReviewRoundDAO $reviewRoundDao */
+        $reviewRoundDao = DAORegistry::getDAO('ReviewRoundDAO');
+        $round = $reviewRoundDao->getById($reviewRoundId);
+        $latest = $reviewRoundDao->getLastReviewRoundBySubmissionId(
+            $submissionId,
+            (int)$assignment->getStageId()
+        );
+        if (
+            !($round instanceof ReviewRound) ||
+            !($latest instanceof ReviewRound) ||
+            (int)$round->getSubmissionId() !== $submissionId ||
+            (int)$round->getStageId() !== (int)$assignment->getStageId() ||
+            (int)$latest->getId() !== $reviewRoundId ||
+            (int)$assignment->getRound() !== (int)$round->getRound()
+        ) {
+            return null;
+        }
+
+        return $assignment;
+    }
+
+    private function authorAssignedToCurrentStage(
+        int $authorId,
+        object $submission,
+        object $context
+    ): bool {
+        if ($authorId < 1 || !Repo::user()->get($authorId)) return false;
+
+        $stageId = (int)$submission->getData('stageId');
+        $assignments = Repo::user()->getAccessibleWorkflowStages(
+            $authorId,
+            (int)$context->getId(),
+            $submission
+        );
+        return in_array(
+            Role::ROLE_ID_AUTHOR,
+            $assignments[$stageId] ?? [],
+            true
+        );
+    }
+
+    /**
+     * @return array<int>
+     */
+    private function authorReadableFileStages(
+        int $authorId,
+        object $submission,
+        object $context
+    ): array {
+        $assignments = Repo::user()->getAccessibleWorkflowStages(
+            $authorId,
+            (int)$context->getId(),
+            $submission
+        );
+        $authorAssignments = [];
+        foreach ($assignments as $stageId => $roles) {
+            if (is_array($roles) && in_array(Role::ROLE_ID_AUTHOR, $roles, true)) {
+                $authorAssignments[(int)$stageId] = [Role::ROLE_ID_AUTHOR];
+            }
+        }
+        if ($authorAssignments === []) return [];
+
+        return array_values(array_unique(
+            Repo::submissionFile()->getAssignedFileStages(
+                $authorAssignments,
+                SubmissionFileAccessPolicy::SUBMISSION_FILE_ACCESS_READ
+            )
+        ));
+    }
+
+    private function reviewRoundAllowsAuthorRevision(ReviewRound $reviewRound): bool
+    {
+        $stageId = (int)$reviewRound->getStageId();
+        $decisionTypes = $stageId === WORKFLOW_STAGE_ID_EXTERNAL_REVIEW
+            ? [
+                Decision::ACCEPT,
+                Decision::PENDING_REVISIONS,
+                Decision::NEW_EXTERNAL_ROUND,
+                Decision::RESUBMIT,
+            ]
+            : ($stageId === WORKFLOW_STAGE_ID_INTERNAL_REVIEW
+                ? [
+                    Decision::ACCEPT_INTERNAL,
+                    Decision::PENDING_REVISIONS_INTERNAL,
+                    Decision::NEW_INTERNAL_ROUND,
+                    Decision::RESUBMIT_INTERNAL,
+                ]
+                : []);
+
+        if ($decisionTypes === []) return false;
+
+        return Repo::decision()->getCollector()
+            ->filterBySubmissionIds([(int)$reviewRound->getSubmissionId()])
+            ->filterByStageIds([$stageId])
+            ->filterByReviewRoundIds([(int)$reviewRound->getId()])
+            ->filterByDecisionTypes($decisionTypes)
+            ->getCount() > 0;
+    }
+
+    private function validateReviewFormResponses(
+        ReviewAssignment $assignment,
+        array $responses
+    ): array|JsonResponse {
+        $formId = (int)$assignment->getData('reviewFormId');
+        if ($responses !== [] && $formId < 1) {
+            return $this->error(
+                'review_form_not_assigned',
+                'This review assignment does not use a review form.',
+                400
+            );
+        }
+        if ($formId < 1) return [];
+
+        /** @var \PKP\reviewForm\ReviewFormElementDAO $elementDao */
+        $elementDao = DAORegistry::getDAO('ReviewFormElementDAO');
+        /** @var \PKP\reviewForm\ReviewFormResponseDAO $responseDao */
+        $responseDao = DAORegistry::getDAO('ReviewFormResponseDAO');
+        $existing = $responseDao->getReviewReviewFormResponseValues($assignment->getId());
+        $validated = [];
+
+        foreach ($responses as $response) {
+            if (!is_array($response)) {
+                return $this->error(
+                    'invalid_review_form_response',
+                    'Each review form response must be an object.',
+                    400
+                );
+            }
+            $elementId = (int)($response['elementExternalId'] ?? 0);
+            if ($elementId < 1 || array_key_exists($elementId, $validated)) {
+                return $this->error(
+                    'invalid_review_form_element',
+                    'Review form element identifiers must be valid and unique.',
+                    400
+                );
+            }
+            $element = $elementDao->getById($elementId, $formId);
+            if (!($element instanceof ReviewFormElement)) {
+                return $this->error(
+                    'review_form_element_forbidden',
+                    'A response references an element outside the assigned review form.',
+                    403
+                );
+            }
+            $normalized = $this->normalizeReviewFormValue(
+                $element,
+                $response['value'] ?? null
+            );
+            if ($normalized instanceof JsonResponse) return $normalized;
+            $validated[$elementId] = $normalized;
+        }
+
+        foreach ($elementDao->getRequiredReviewFormElementIds($formId) as $requiredId) {
+            $value = array_key_exists((int)$requiredId, $validated)
+                ? $validated[(int)$requiredId]
+                : ($existing[(int)$requiredId] ?? null);
+            if ($this->reviewFormValueEmpty($value)) {
+                return $this->error(
+                    'review_form_required',
+                    'All required OMP review form fields must be completed before submission.',
+                    400
+                );
+            }
+        }
+        return $validated;
+    }
+
+    private function normalizeReviewFormValue(
+        ReviewFormElement $element,
+        mixed $value
+    ): mixed {
+        $type = (int)$element->getElementType();
+        $possible = $element->getLocalizedPossibleResponses();
+        $allowed = is_array($possible)
+            ? array_map('strval', array_keys($possible))
+            : [];
+
+        if ($type === ReviewFormElement::REVIEW_FORM_ELEMENT_TYPE_CHECKBOXES) {
+            if (!is_array($value)) {
+                return $this->error(
+                    'invalid_review_form_value',
+                    'Checkbox responses must be arrays.',
+                    400
+                );
+            }
+            $values = array_values(array_unique(array_map('strval', $value)));
+            foreach ($values as $item) {
+                if (!in_array($item, $allowed, true)) {
+                    return $this->error(
+                        'invalid_review_form_option',
+                        'A checkbox response contains an invalid option.',
+                        400
+                    );
+                }
+            }
+            return $values;
+        }
+
+        if (in_array(
+            $type,
+            [
+                ReviewFormElement::REVIEW_FORM_ELEMENT_TYPE_RADIO_BUTTONS,
+                ReviewFormElement::REVIEW_FORM_ELEMENT_TYPE_DROP_DOWN_BOX,
+            ],
+            true
+        )) {
+            if (!is_scalar($value) && $value !== null) {
+                return $this->error(
+                    'invalid_review_form_value',
+                    'Choice responses must contain one option.',
+                    400
+                );
+            }
+            $scalar = $value === null ? '' : (string)$value;
+            if ($scalar !== '' && !in_array($scalar, $allowed, true)) {
+                return $this->error(
+                    'invalid_review_form_option',
+                    'The selected review form option is invalid.',
+                    400
+                );
+            }
+            return $scalar;
+        }
+
+        if (!in_array(
+            $type,
+            [
+                ReviewFormElement::REVIEW_FORM_ELEMENT_TYPE_SMALL_TEXT_FIELD,
+                ReviewFormElement::REVIEW_FORM_ELEMENT_TYPE_TEXT_FIELD,
+                ReviewFormElement::REVIEW_FORM_ELEMENT_TYPE_TEXTAREA,
+            ],
+            true
+        )) {
+            return $this->error(
+                'unsupported_review_form_element',
+                'The assigned OMP review form contains an unsupported element type.',
+                400
+            );
+        }
+
+        if (!is_scalar($value) && $value !== null) {
+            return $this->error(
+                'invalid_review_form_value',
+                'Text review form responses must be text.',
+                400
+            );
+        }
+        $text = $value === null ? '' : (string)$value;
+        if (mb_strlen($text) > 100000) {
+            return $this->error(
+                'review_form_value_too_long',
+                'A review form response exceeds the supported length.',
+                400
+            );
+        }
+        return $text;
+    }
+
+    private function reviewFormValueEmpty(mixed $value): bool
+    {
+        if (is_array($value)) return $value === [];
+        return trim((string)($value ?? '')) === '';
+    }
+
+    private function saveReviewFormResponse(
+        ReviewAssignment $assignment,
+        int $elementId,
+        mixed $value
+    ): void {
+        /** @var \PKP\reviewForm\ReviewFormElementDAO $elementDao */
+        $elementDao = DAORegistry::getDAO('ReviewFormElementDAO');
+        /** @var \PKP\reviewForm\ReviewFormResponseDAO $responseDao */
+        $responseDao = DAORegistry::getDAO('ReviewFormResponseDAO');
+        $element = $elementDao->getById(
+            $elementId,
+            (int)$assignment->getReviewFormId()
+        );
+        if (!($element instanceof ReviewFormElement)) return;
+
+        $response = $responseDao->getReviewFormResponse(
+            (int)$assignment->getId(),
+            $elementId
+        ) ?? new ReviewFormResponse();
+
+        $responseType = match ((int)$element->getElementType()) {
+            ReviewFormElement::REVIEW_FORM_ELEMENT_TYPE_CHECKBOXES => 'object',
+            ReviewFormElement::REVIEW_FORM_ELEMENT_TYPE_RADIO_BUTTONS,
+            ReviewFormElement::REVIEW_FORM_ELEMENT_TYPE_DROP_DOWN_BOX => 'int',
+            default => 'string',
+        };
+        $response->setResponseType($responseType);
+        $response->setValue($value);
+
+        if (
+            $response->getReviewId() !== null &&
+            $response->getReviewFormElementId() !== null
+        ) {
+            $responseDao->updateObject($response);
+            return;
+        }
+        $response->setReviewId((int)$assignment->getId());
+        $response->setReviewFormElementId($elementId);
+        $responseDao->insertObject($response);
     }
 
     private function hasScope(array $claims, string $scope): bool

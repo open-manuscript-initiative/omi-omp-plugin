@@ -77,6 +77,21 @@ route group instead of registering a second handler. This preserves the
 existing `/api/v1/omi-integration/*` URLs without relying on duplicate route
 registration.
 
+## Studio service client contract
+
+The short-lived launch assertion is used to bootstrap authorized metadata and
+capability reads. Long-running Studio editing sessions do not persist or reuse
+an expired launch assertion for workflow writes. Instead, Studio's server uses
+the installation shared secret to sign HMAC service requests. OMP independently
+revalidates the external PKP identifiers and current workflow state on every
+write.
+
+The native client contract exposes `platform-capabilities`, `review-context`,
+`author-context`, reviewer attachment upload, author revision upload and
+`review-result-v2`. The latter may persist review-form responses and native
+reviewer recommendation IDs when the host supports them, but it never completes
+the OMP review assignment.
+
 ## API usage policy
 
 The plugin prefers OMP/PKP repository and application services. DAO access is used only where PKP 3.5 itself still exposes the relevant workflow through DAOs, including `ReviewFilesDAO`, `ReviewRoundDAO`, review-form DAOs and `GenreDAO`.

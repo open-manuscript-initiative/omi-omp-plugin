@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.5.0.0 — 2026-09-19
+
+### Added
+
+- Add `author-context` discovery so Studio can resolve the current native OMP review round before offering author revision upload.
+- Add Studio server-to-server HMAC authentication to reviewer attachment upload, author revision upload and `review-result-v2` without weakening launch-scoped browser access.
+- Accept JSON/Base64 workflow-file transfer for signed Studio service writeback while retaining multipart launch-mode uploads.
+- Persist native OMP review-form responses through `review-result-v2` and keep OMP review completion authoritative in the native workflow.
+- Advertise the native Studio service-writeback contract through `platform-capabilities`.
+
+### Security
+
+- Bind reviewer service writes to the exact submission, reviewer, review assignment and latest review round.
+- Bind author revision writes to the signed author, current OMP workflow stage, latest review round and a native revision-request decision.
+- Reject stale and cross-submission/cross-assignment/cross-round identifiers.
+- Keep shared secrets server-side; service requests use bounded HMAC-SHA256 signatures.
+- Limit JSON workflow-file transfers to 25 MiB and validate file names and Base64 content.
+
+### Validation
+
+- Add a CI contract covering native OMP Studio service authentication, workflow authority and non-completion invariants.
+
 ## 1.4.2.0 — 2026-09-19
 
 ### Security

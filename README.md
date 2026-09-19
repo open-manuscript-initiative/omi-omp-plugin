@@ -38,7 +38,7 @@ Studio must not read the OMP database or private file storage directly.
 - role-scoped editor, author and reviewer access;
 - press and monograph metadata reads;
 - contributor reads for authorized editorial/author contexts, including preferred public name, structured affiliations/ROR, biography, competing interests, publication-list visibility and CRediT roles;
-- submission-file listing and protected binary transfer;
+- submission-file listing and protected binary transfer with native PKP author-stage filtering;
 - reviewer file access constrained by PKP `ReviewFilesDAO`;
 - reviewer launch and file access bound to one assigned OMP chapter, exposed to Studio as a standalone article;
 - native PKP review-form definition and response persistence;
@@ -50,7 +50,7 @@ Studio must not read the OMP database or private file storage directly.
 - provenance-verified Production artifact transfer for HTML, JATS XML, print PDF and interactive PDF;
 - native OMP Publication Format / proof-file persistence without automatic approval, availability, viewability or publication.
 
-Capabilities are advertised only when implemented safely.
+Capabilities are advertised only when implemented safely. All OMP-native endpoints remain under the single public `omi-integration` API handler; PKP's router sees one registered handler path, while the primary controller composes the native route set internally.
 
 ## OMP-specific workflow rules
 

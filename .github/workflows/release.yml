@@ -42,7 +42,11 @@ jobs:
             VERSION="${DISPATCH_VERSION}"
           else
             OMP_RELEASE="$(php -r '$xml = simplexml_load_file("version.xml"); if ($xml === false) exit(2); echo trim((string)$xml->release);')"
-            VERSION="${OMP_RELEASE%.0}"
+            if [[ ! "$OMP_RELEASE" =~ ^([0-9]+\.[0-9]+\.[0-9]+)\.0$ ]]; then
+              echo "Invalid PKP release version: $OMP_RELEASE (expected x.y.z.0)" >&2
+              exit 1
+            fi
+            VERSION="${BASH_REMATCH[1]}"
           fi
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Invalid release version: $VERSION" >&2

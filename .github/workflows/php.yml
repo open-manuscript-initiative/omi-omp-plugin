@@ -49,6 +49,9 @@ jobs:
       - name: Check native Studio client contract
         run: php tests/native-studio-client-contract.php
 
+      - name: Check OMP 3.5.0-4 recommendation compatibility
+        run: php tests/omp-3504-review-recommendation-compatibility.php
+
       - name: Check OMP publication authority contract
         run: php tests/publication-artifact-controller.php
 

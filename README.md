@@ -4,7 +4,7 @@ Open Monograph Press integration plugin for connecting OMP with the Open Manuscr
 
 ## Status
 
-Release candidate targeting **OMP 3.5.x**, **PHP 8.2+**, and the OMI Integration API v1.
+Release candidate targeting **OMP 3.5.x**, **PHP 8.2+**, and the OMI Integration API v1. Native Studio writeback requires plugin **1.5.0.0** or newer.
 
 Profile identifier:
 
@@ -44,6 +44,8 @@ Studio must not read the OMP database or private file storage directly.
 - native PKP review-form definition and response persistence;
 - assignment-scoped reviewer attachment upload using `SUBMISSION_FILE_REVIEW_ATTACHMENT` and `ASSOC_TYPE_REVIEW_ASSIGNMENT`;
 - current-review-round author revision upload using `SUBMISSION_FILE_REVIEW_REVISION` or `SUBMISSION_FILE_INTERNAL_REVIEW_REVISION` and `ASSOC_TYPE_REVIEW_ROUND`;
+- author-context discovery for the current writable native OMP review round;
+- signed Studio service writeback for reviewer attachments, author revisions, review-form responses and `review-result-v2`;
 - review comments with author-visible and editor-only separation;
 - capability discovery for OMP-specific reviewer recommendation support;
 - OMP-native review completion authority retained in OMP;

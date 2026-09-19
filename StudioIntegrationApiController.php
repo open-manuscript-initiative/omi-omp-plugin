@@ -64,6 +64,12 @@ class StudioIntegrationApiController extends PKPBaseController
                 Role::ROLE_ID_ASSISTANT,
             ])])
             ->name('api.omiIntegration.publicationArtifact');
+
+        // Keep all existing /omi-integration native URLs while satisfying the
+        // PKP 3.5 requirement that a plugin registers each handler path once.
+        // The native controller contributes routes to this already-active route
+        // group but is not independently registered with APIRouter.
+        (new StudioIntegrationNativeApiController($this->plugin))->getGroupRoutes();
     }
 
     /**

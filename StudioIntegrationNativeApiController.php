@@ -502,6 +502,7 @@ class StudioIntegrationNativeApiController extends PKPBaseController
         }
 
         $recommendation = $illuminateRequest->input('reviewerRecommendationExternalId');
+        $recommendationId = null;
         if ($recommendation !== null && $recommendation !== '') {
             if (!Application::get()->hasCustomizableReviewerRecommendation()) {
                 return $this->error(
@@ -521,7 +522,6 @@ class StudioIntegrationNativeApiController extends PKPBaseController
             if (!array_key_exists($recommendationId, $options)) {
                 return $this->error('invalid_reviewer_recommendation', 'The reviewer recommendation is not available for this OMP review assignment.', 400);
             }
-            Repo::reviewAssignment()->edit($assignment, ['reviewerRecommendationId' => $recommendationId]);
         }
 
         $legacyRecommendation = trim((string)$illuminateRequest->input('recommendation', ''));
@@ -551,6 +551,12 @@ class StudioIntegrationNativeApiController extends PKPBaseController
             return $this->error('empty_review_result', 'The review result does not contain writable content.', 400);
         }
 
+        if ($recommendationId !== null) {
+            Repo::reviewAssignment()->edit(
+                $assignment,
+                ['reviewerRecommendationId' => $recommendationId]
+            );
+        }
         foreach ($validatedFormResponses as $elementId => $value) {
             $this->saveReviewFormResponse($assignment, $elementId, $value);
         }

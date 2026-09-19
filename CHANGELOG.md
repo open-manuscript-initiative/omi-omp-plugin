@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.5.0.1 — 2026-09-19
+
+### Fixed
+
+- Restore compatibility with OMP 3.5.0-4, where `APP\core\Application::hasCustomizableReviewerRecommendation()` is not available.
+- Feature-detect customizable reviewer recommendation support and safely report it as unavailable when the host application does not expose the API.
+- Prevent `platform-capabilities`, `review-context`, and `review-result-v2` from failing with HTTP 500 on OMP 3.5.0-4.
+
+### Validation
+
+- Add a dedicated OMP 3.5.0-4 compatibility contract to PHP 8.2/8.3/8.4 CI.
+
 ## 1.5.0.0 — 2026-09-19
 
 ### Added

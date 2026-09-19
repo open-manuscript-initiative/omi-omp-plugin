@@ -2,6 +2,7 @@
 namespace APP\plugins\generic\studioIntegration;
 
 use APP\core\Application;
+use APP\decision\Decision;
 use APP\facades\Repo;
 use APP\plugins\generic\studioIntegration\classes\Adapters\Omp35Adapter;
 use APP\plugins\generic\studioIntegration\classes\Core\LaunchToken;
@@ -13,6 +14,8 @@ use PKP\core\PKPApplication;
 use PKP\core\PKPBaseController;
 use PKP\db\DAORegistry;
 use PKP\file\FileManager;
+use PKP\reviewForm\ReviewFormElement;
+use PKP\reviewForm\ReviewFormResponse;
 use PKP\security\Role;
 use PKP\submission\GenreDAO;
 use PKP\submission\ReviewFilesDAO;
@@ -32,6 +35,9 @@ use PKP\submissionFile\SubmissionFile;
  */
 class StudioIntegrationNativeApiController extends PKPBaseController
 {
+    private const SERVICE_CLOCK_SKEW_SECONDS = 300;
+    private const MAX_SERVICE_FILE_BYTES = 25 * 1024 * 1024;
+
     public function __construct(private StudioIntegrationPlugin $plugin)
     {
     }
@@ -52,6 +58,8 @@ class StudioIntegrationNativeApiController extends PKPBaseController
             ->name('api.omiIntegration.platformCapabilities');
         Route::get('review-context', $this->reviewContext(...))
             ->name('api.omiIntegration.reviewContext');
+        Route::get('author-context', $this->authorContext(...))
+            ->name('api.omiIntegration.authorContext');
         Route::get('review-attachments', $this->reviewAttachments(...))
             ->name('api.omiIntegration.reviewAttachments');
         Route::post('review-attachments', $this->uploadReviewAttachment(...))
@@ -93,6 +101,13 @@ class StudioIntegrationNativeApiController extends PKPBaseController
                     'internalFileStage' => SubmissionFile::SUBMISSION_FILE_INTERNAL_REVIEW_REVISION,
                     'association' => 'reviewRound',
                     'currentRoundOnly' => true,
+                ],
+                'serviceWriteback' => [
+                    'supported' => true,
+                    'authentication' => 'omi-hmac-sha256',
+                    'reviewAttachments' => 'review-attachments',
+                    'authorRevisions' => 'author-revisions',
+                    'reviewResult' => 'review-result-v2',
                 ],
             ],
         ]);
@@ -146,6 +161,69 @@ class StudioIntegrationNativeApiController extends PKPBaseController
                     ? (string)$assignment->getData('reviewerRecommendationId')
                     : null,
             ],
+        ]);
+    }
+
+    public function authorContext(IlluminateRequest $illuminateRequest): JsonResponse
+    {
+        $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
+        if ($authorized instanceof JsonResponse) return $authorized;
+        [$claims, $submissionId, $context] = $authorized;
+
+        if (($claims['actorMode'] ?? '') !== 'author' || !$this->hasScope($claims, 'author.revision.write')) {
+            return $this->error('insufficient_scope', 'Author context access requires author.revision.write.', 403);
+        }
+
+        $submission = Repo::submission()->get($submissionId, $context->getId());
+        if (!$submission) {
+            return $this->error('submission_not_found', 'Monograph submission not found.', 404);
+        }
+
+        $actorId = (int)($claims['actor']['externalId'] ?? 0);
+        if (!$this->authorAssignedToCurrentStage($actorId, $submission, $context)) {
+            return $this->error(
+                'author_not_assigned',
+                'The signed author is not assigned to the current OMP workflow stage.',
+                403
+            );
+        }
+
+        $stageId = (int)$submission->getData('stageId');
+        if (!in_array($stageId, Application::get()->getReviewStages(), true)) {
+            return response()->json([
+                'protocol' => 'omi-integration/1',
+                'profile' => Omp35Adapter::PROFILE,
+                'submissionExternalId' => (string)$submissionId,
+                'writable' => false,
+                'reason' => 'not_in_review_stage',
+                'reviewRoundExternalId' => null,
+            ]);
+        }
+
+        /** @var ReviewRoundDAO $reviewRoundDao */
+        $reviewRoundDao = DAORegistry::getDAO('ReviewRoundDAO');
+        $reviewRound = $reviewRoundDao->getLastReviewRoundBySubmissionId($submissionId, $stageId);
+        if (!($reviewRound instanceof ReviewRound)) {
+            return response()->json([
+                'protocol' => 'omi-integration/1',
+                'profile' => Omp35Adapter::PROFILE,
+                'submissionExternalId' => (string)$submissionId,
+                'writable' => false,
+                'reason' => 'review_round_unavailable',
+                'reviewRoundExternalId' => null,
+            ]);
+        }
+
+        $writable = $this->reviewRoundAllowsAuthorRevision($reviewRound);
+        return response()->json([
+            'protocol' => 'omi-integration/1',
+            'profile' => Omp35Adapter::PROFILE,
+            'submissionExternalId' => (string)$submissionId,
+            'writable' => $writable,
+            'reason' => $writable ? null : 'revision_not_requested',
+            'reviewRoundExternalId' => (string)$reviewRound->getId(),
+            'round' => (int)$reviewRound->getRound(),
+            'stageId' => $stageId,
         ]);
     }
 

@@ -17,6 +17,7 @@ use PKP\file\FileManager;
 use PKP\reviewForm\ReviewFormElement;
 use PKP\reviewForm\ReviewFormResponse;
 use PKP\security\Role;
+use PKP\security\authorization\SubmissionFileAccessPolicy;
 use PKP\submission\GenreDAO;
 use PKP\submission\ReviewFilesDAO;
 use PKP\submission\SubmissionComment;
@@ -415,6 +416,20 @@ class StudioIntegrationNativeApiController extends PKPBaseController
         $sourceFile = $sourceId > 0 ? Repo::submissionFile()->get($sourceId, $submissionId) : null;
         if ($sourceId > 0 && !$sourceFile) {
             return $this->error('source_file_not_found', 'The source submission file does not belong to this monograph.', 404);
+        }
+        if ($sourceFile) {
+            $readableStages = $this->authorReadableFileStages(
+                $authorId,
+                $submission,
+                $context
+            );
+            if (!in_array((int)$sourceFile->getData('fileStage'), $readableStages, true)) {
+                return $this->error(
+                    'source_file_forbidden',
+                    'The source file is not visible to this author in the native OMP workflow.',
+                    403
+                );
+            }
         }
 
         $genreId = $this->resolveGenreId($illuminateRequest, $submissionId, $context->getId(), $sourceFile);
@@ -975,6 +990,35 @@ class StudioIntegrationNativeApiController extends PKPBaseController
             $assignments[$stageId] ?? [],
             true
         );
+    }
+
+    /**
+     * @return array<int>
+     */
+    private function authorReadableFileStages(
+        int $authorId,
+        object $submission,
+        object $context
+    ): array {
+        $assignments = Repo::user()->getAccessibleWorkflowStages(
+            $authorId,
+            (int)$context->getId(),
+            $submission
+        );
+        $authorAssignments = [];
+        foreach ($assignments as $stageId => $roles) {
+            if (is_array($roles) && in_array(Role::ROLE_ID_AUTHOR, $roles, true)) {
+                $authorAssignments[(int)$stageId] = [Role::ROLE_ID_AUTHOR];
+            }
+        }
+        if ($authorAssignments === []) return [];
+
+        return array_values(array_unique(
+            Repo::submissionFile()->getAssignedFileStages(
+                $authorAssignments,
+                SubmissionFileAccessPolicy::SUBMISSION_FILE_ACCESS_READ
+            )
+        ));
     }
 
     private function reviewRoundAllowsAuthorRevision(ReviewRound $reviewRound): bool

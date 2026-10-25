@@ -1,0 +1,57 @@
+name: PKP OMP compatibility
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pkp-omp-compatibility-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  omp-integration:
+    name: OMP ${{ matrix.pkp-ref }} integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - application: omp
+            pkp-ref: 3_5_0-4
+            php-version: 8.3
+            database: mysql
+          - application: omp
+            pkp-ref: 3_5_0-5
+            php-version: 8.3
+            database: mysql
+
+    steps:
+      - name: Check out the plugin
+        uses: actions/checkout@v4
+
+      # The organization allowlist must include this composite action and its referenced sub-actions.
+      - name: Prepare OMP test environment
+        uses: pkp/pkp-github-actions@v1
+        with:
+          application: omp
+          branch: ${{ matrix.pkp-ref }}
+          repository: pkp
+          node_version: 20
+
+      - name: Load the plugin in OMP
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_dir="$HOME/omp"
+          plugin_dir="$app_dir/plugins/generic/studioIntegration"
+          mkdir -p "$plugin_dir"
+          rsync -a --exclude='.git/' --exclude='pkp-github-actions/' "$GITHUB_WORKSPACE"/ "$plugin_dir"/
+          cd "$app_dir"
+          bash "$plugin_dir/.github/actions/tests.sh"

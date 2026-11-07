@@ -2,6 +2,10 @@
 
 This document records how the OMI OMP Integration Plugin maps to Open Monograph Press and PKP 3.5 workflow semantics.
 
+## Version matrix
+
+The installation CI covers OMP 3.5.0-4, 3.5.0-5 and 3.5.0-6. Each version requires its own successful result. Studio-side OMP support remains Preview. The -6 chapter-author copy correction remains native OMP behavior; the adapter preserves chapter-bound metadata and access rather than reconstructing those associations.
+
 ## Authority model
 
 OMP is the system of record. The integration must not replace OMP workflow state with a parallel Studio workflow.

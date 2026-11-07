@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — 2026-11-07
+
+- Extend installation CI to OMP 3.5.0-6 while retaining -4/-5.
+- Verify the actual checked-out PKP version before recording a compatibility smoke result.
+
+
 ## 1.5.1.0 — 2026-09-19
 
 ### Fixed

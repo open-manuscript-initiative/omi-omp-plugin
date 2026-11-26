@@ -48,6 +48,13 @@ class StudioIntegrationApiController extends PKPBaseController
     {
         Route::get('', $this->capabilities(...))->name('api.omiIntegration.capabilities');
         Route::get('submission-options', $this->submissionOptions(...))->name('api.omiIntegration.submissionOptions');
+        Route::get('volumes/{submissionId}/import-manifest', $this->volumeImportManifest(...))
+            ->whereNumber('submissionId')
+            ->middleware(['has.user', self::roleAuthorizer([
+                Role::ROLE_ID_MANAGER,
+                Role::ROLE_ID_SITE_ADMIN,
+            ])])
+            ->name('api.omiIntegration.volumeImportManifest');
         Route::get('submission', $this->submission(...))->name('api.omiIntegration.submission');
         Route::get('contributors', $this->contributors(...))->name('api.omiIntegration.contributors');
         Route::get('reviewers', $this->reviewers(...))->name('api.omiIntegration.reviewers');
@@ -523,6 +530,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'capabilities' => [
                 'launch',
                 'metadata.read',
+                'editor.volume-manifest.read',
                 'contributors.read',
                 'reviewers.read',
                 'files.read',
@@ -563,6 +571,67 @@ class StudioIntegrationApiController extends PKPBaseController
                 'review.recommendations.native',
             ],
         ]);
+    }
+
+    /**
+     * Native authenticated read-only manifest for the current unpublished Production volume.
+     * Never accepts a review assertion as a native editorial credential.
+     */
+    public function volumeImportManifest(IlluminateRequest $input): JsonResponse
+    {
+        $request = Application::get()->getRequest();
+        $context = $request->getContext();
+        $user = $request->getUser();
+        if (!$context || !$user || !$this->plugin->getEnabled($context->getId())) {
+            return $this->error('editor_required', 'An enabled press and authenticated manager are required.', 403);
+        }
+        $adapter = new Omp35Adapter();
+        $submissionId = (int)$input->route('submissionId');
+        $submission = $adapter->getSubmission($submissionId, (int)$context->getId());
+        if (!$submission) {
+            return $this->error('submission_not_found', 'Volume not found.', 404);
+        }
+        $stages = Repo::user()->getAccessibleWorkflowStages($user->getId(), $context->getId(), $submission);
+        if (!array_intersect($stages[WORKFLOW_STAGE_ID_PRODUCTION] ?? [], [Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN])) {
+            return $this->error('editor_required', 'Manager access to this volume in Production is required.', 403);
+        }
+        $publication = Repo::publication()->get((int)$submission->getData('currentPublicationId'));
+        if (!$publication || (int)$submission->getData('stageId') !== WORKFLOW_STAGE_ID_PRODUCTION
+            || (int)$publication->getData('status') !== Submission::STATUS_QUEUED) {
+            return $this->error('volume_not_ready', 'The volume must be the current unpublished Production version.', 409);
+        }
+        $publicationId = (int)$publication->getId();
+        $volume = $adapter->mapSubmission($submission);
+        $chapters = $adapter->mapVolumeChapters($publicationId);
+        $contributors = $adapter->mapContributors($submission);
+        foreach ($contributors as &$contributor) {
+            unset($contributor['email']);
+        }
+        unset($contributor);
+        $chapterIds = array_column($chapters, 'externalId');
+        $sources = Omp35Adapter::volumeSourceDescriptors($adapter->mapFiles($submission), $chapterIds);
+        $current = $adapter->getSubmission($submissionId, (int)$context->getId());
+        $currentPublication = $current ? Repo::publication()->get((int)$current->getData('currentPublicationId')) : null;
+        if (!$current || !$currentPublication || (int)$currentPublication->getId() !== $publicationId
+            || (string)$publicationId !== $volume['publicationExternalId']
+            || (int)$current->getData('stageId') !== WORKFLOW_STAGE_ID_PRODUCTION
+            || (int)$currentPublication->getData('status') !== Submission::STATUS_QUEUED) {
+            return $this->error('volume_changed', 'Volume changed during manifest projection; reload.', 409);
+        }
+        return response()->json([
+            'protocol' => 'omi-integration/1',
+            'profile' => Omp35Adapter::PROFILE,
+            'installationId' => $this->plugin->getInstallationId($context->getId(), $request),
+            'context' => $adapter->mapContext($context, $request),
+            'volume' => $volume,
+            'workType' => (int)$submission->getData('workType') === Submission::WORK_TYPE_EDITED_VOLUME
+                ? 'edited-volume' : 'authored-work',
+            'doi' => $publication->getDoi(),
+            'chapters' => $chapters,
+            'contributors' => $contributors,
+            'sources' => $sources,
+            'binaryTransfer' => ['available' => false],
+        ])->header('Cache-Control', 'private, no-store');
     }
 
     public function submission(IlluminateRequest $illuminateRequest): JsonResponse

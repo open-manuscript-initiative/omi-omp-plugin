@@ -31,8 +31,11 @@ class StudioIntegrationApiHandler extends Handler
         }
 
         $requestedMode = (string)$request->getUserVar('mode');
-        $resolvedMode = $this->plugin->resolveLaunchMode($request, $requestedMode);
-        if ($resolvedMode === 'review') {
+        $resolvedMode = $requestedMode === 'volume'
+            ? 'volume' : $this->plugin->resolveLaunchMode($request, $requestedMode);
+        if ($resolvedMode === 'volume') {
+            $launchUrl = $this->plugin->createVolumeLaunchUrl($request, $submissionId);
+        } elseif ($resolvedMode === 'review') {
             $launchUrl = $this->plugin->createReviewerLaunchUrl($request, $submissionId);
             if ($launchUrl !== null) {
                 $launchUrl = $this->reviewWorkspaceLaunchUrl($launchUrl);

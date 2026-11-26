@@ -77,10 +77,24 @@ namespace {
     $handler = substr($controller, $start, $end - $start);
     foreach (['getAccessibleWorkflowStages', 'Role::ROLE_ID_MANAGER', 'Role::ROLE_ID_SITE_ADMIN',
         'Submission::STATUS_QUEUED', 'currentPublicationId', 'private, no-store',
-        "'binaryTransfer' => ['available' => false]"] as $guard) {
+        "'binaryTransfer' => ['available' => \$signed]"] as $guard) {
         if (!str_contains($handler, $guard)) {
             throw new \RuntimeException('Missing volume manifest boundary: ' . $guard);
         }
+    }
+    $plugin = file_get_contents(__DIR__ . '/../StudioIntegrationPlugin.php');
+    $handlerSource = file_get_contents(__DIR__ . '/../StudioIntegrationApiHandler.php');
+    foreach (["'scope' => ['volume.import.read']", "'actorMode' => 'volume'", '/integrations/omp/volume-launch?',
+        'volumeImportTarget', 'Submission::STATUS_QUEUED', 'ROLE_ID_MANAGER', 'ROLE_ID_SITE_ADMIN'] as $guard) {
+        if (!str_contains($plugin, $guard)) throw new \RuntimeException('Missing volume launch boundary: ' . $guard);
+    }
+    foreach (["'volume-import/manifest'", "'volume-import/files/{submissionFileId}/content'",
+        "!== ['volume.import.read']", 'LaunchToken::verify', 'volumeImportTarget',
+        'volumeSourceDescriptors', 'file_changed', 'realpath', 'source_too_large', '32 * 1024 * 1024'] as $guard) {
+        if (!str_contains($controller, $guard)) throw new \RuntimeException('Missing signed volume read boundary: ' . $guard);
+    }
+    if (!str_contains($handlerSource, "requestedMode === 'volume'") || !str_contains($handlerSource, 'createVolumeLaunchUrl')) {
+        throw new \RuntimeException('Explicit volume launch must not fall back to ordinary editor mode.');
     }
     echo "OMP volume manifest contract passed.\n";
 }

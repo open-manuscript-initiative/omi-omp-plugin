@@ -3,6 +3,7 @@ namespace APP\plugins\generic\studioIntegration;
 
 use APP\core\Application;
 use APP\facades\Repo;
+use APP\submission\Submission;
 use APP\plugins\generic\studioIntegration\classes\Core\LaunchToken;
 use APP\plugins\generic\studioIntegration\classes\StudioIntegrationSettingsForm;
 use PKP\core\APIRouter;
@@ -259,6 +260,64 @@ class StudioIntegrationPlugin extends GenericPlugin
         }
 
         return $studioUrl . '/integrations/omp/launch?' . http_build_query($token, '', '&', PHP_QUERY_RFC3986);
+    }
+
+    /** Resolve current manager access and publication state for every volume request. */
+    public function volumeImportTarget($context, $user, int $submissionId, ?int $expectedPublicationId = null): ?array
+    {
+        if (!$context || !$user || $submissionId < 1 || !$this->getEnabled($context->getId())) return null;
+        if (!$user->hasRole([Role::ROLE_ID_MANAGER], $context->getId())
+            && !$user->hasRole([Role::ROLE_ID_SITE_ADMIN], Application::SITE_CONTEXT_ID)) return null;
+        $submission = Repo::submission()->get($submissionId, $context->getId());
+        if (!$submission || (int)$submission->getData('contextId') !== (int)$context->getId()
+            || (int)$submission->getData('stageId') !== WORKFLOW_STAGE_ID_PRODUCTION) return null;
+        $stages = Repo::user()->getAccessibleWorkflowStages($user->getId(), $context->getId(), $submission);
+        if (!array_intersect($stages[WORKFLOW_STAGE_ID_PRODUCTION] ?? [], [Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN])) return null;
+        $publication = Repo::publication()->get((int)$submission->getData('currentPublicationId'));
+        if (!$publication || (int)$publication->getData('submissionId') !== $submissionId
+            || (int)$publication->getData('status') !== Submission::STATUS_QUEUED
+            || ($expectedPublicationId !== null && (int)$publication->getId() !== $expectedPublicationId)) return null;
+        return [$submission, $publication];
+    }
+
+    /** Separate read-only assertion; never reuse the ordinary editor or review grant. */
+    public function createVolumeLaunchUrl($request, int $submissionId): ?string
+    {
+        $context = $request->getContext();
+        $user = $request->getUser();
+        $target = $this->volumeImportTarget($context, $user, $submissionId);
+        if (!$target) return null;
+        [, $publication] = $target;
+        $contextId = (int)$context->getId();
+        $studioUrl = rtrim(trim((string)$this->getSetting($contextId, 'studioUrl')), '/');
+        $parts = parse_url($studioUrl);
+        if (!$parts || !in_array($parts['scheme'] ?? '', ['http', 'https'], true)
+            || empty($parts['host']) || isset($parts['user'], $parts['pass'])
+            || isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])) return null;
+        $secret = $this->getSharedSecret($contextId);
+        if ($secret === '') return null;
+        $now = time();
+        $claims = [
+            'protocol' => 'omi-integration/1',
+            'profile' => 'omi-integration/1/omp',
+            'installationId' => $this->getInstallationId($contextId, $request),
+            'context' => ['externalId' => (string)$contextId, 'type' => 'press', 'path' => $context->getPath()],
+            'volume' => ['submissionId' => (string)$submissionId, 'publicationId' => (string)$publication->getId()],
+            'actor' => ['externalId' => (string)$user->getId()],
+            'actorMode' => 'volume',
+            'scope' => ['volume.import.read'],
+            'iat' => $now,
+            'exp' => $now + min(300, $this->getTokenTtl($contextId)),
+            'nonce' => bin2hex(random_bytes(16)),
+            'externalBaseUrl' => $request->getBaseUrl(),
+            'apiBaseUrl' => $request->getDispatcher()->url($request, Application::ROUTE_API, $context->getPath(), 'omi-integration'),
+        ];
+        try {
+            $token = LaunchToken::issue($claims, $secret);
+        } catch (\Throwable) {
+            return null;
+        }
+        return $studioUrl . '/integrations/omp/volume-launch?' . http_build_query($token, '', '&', PHP_QUERY_RFC3986);
     }
 
     public function createReviewerLaunchUrl($request, int $submissionId): ?string

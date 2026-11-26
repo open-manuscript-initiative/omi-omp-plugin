@@ -21,3 +21,12 @@ msgstr "Megosztott titok"
 
 msgid "plugins.generic.studioIntegration.settings.tokenTtl"
 msgstr "Token élettartama (másodperc)"
+
+msgid "plugins.generic.studioIntegration.openVolumeInStudio"
+msgstr "Teljes kötet megnyitása a Stúdióban"
+
+msgid "plugins.generic.studioIntegration.openingStudio"
+msgstr "A Stúdió megnyitása…"
+
+msgid "plugins.generic.studioIntegration.settings.enableVolumeLauncher"
+msgstr "Kísérleti teljeskötet-indító engedélyezése (kompatibilis Stúdió szükséges)"

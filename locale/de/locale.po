@@ -21,3 +21,12 @@ msgstr "Gemeinsames Geheimnis"
 
 msgid "plugins.generic.studioIntegration.settings.tokenTtl"
 msgstr "Token-Gültigkeitsdauer (Sekunden)"
+
+msgid "plugins.generic.studioIntegration.openVolumeInStudio"
+msgstr "Gesamten Band in Studio öffnen"
+
+msgid "plugins.generic.studioIntegration.openingStudio"
+msgstr "Studio wird geöffnet…"
+
+msgid "plugins.generic.studioIntegration.settings.enableVolumeLauncher"
+msgstr "Experimentellen Bandimport aktivieren (kompatibles Studio erforderlich)"

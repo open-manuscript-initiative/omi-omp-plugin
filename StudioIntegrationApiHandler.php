@@ -31,6 +31,14 @@ class StudioIntegrationApiHandler extends Handler
         }
 
         $requestedMode = (string)$request->getUserVar('mode');
+        if ($requestedMode === 'volume-check') {
+            header('Cache-Control: private, no-store');
+            $context = $request->getContext();
+            $user = $request->getUser();
+            $eligible = $this->plugin->volumeLauncherEnabled($context, $user)
+                && $this->plugin->volumeImportTarget($context, $user, $submissionId) !== null;
+            return new JSONMessage(true, ['eligible' => $eligible]);
+        }
         $resolvedMode = $requestedMode === 'volume'
             ? 'volume' : $this->plugin->resolveLaunchMode($request, $requestedMode);
         if ($resolvedMode === 'volume') {

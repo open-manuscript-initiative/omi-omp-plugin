@@ -12,6 +12,9 @@ $(function() {
             {fbvElement type="text" id="sharedSecret" value=$sharedSecret label="plugins.generic.studioIntegration.settings.sharedSecret" size=$fbvStyles.size.LARGE}
             {fbvElement type="text" id="tokenTtl" value=$tokenTtl label="plugins.generic.studioIntegration.settings.tokenTtl" size=$fbvStyles.size.SMALL}
         {/fbvFormSection}
+        {fbvFormSection list=true}
+            {fbvElement type="checkbox" id="enableVolumeLauncher" checked=$enableVolumeLauncher label="plugins.generic.studioIntegration.settings.enableVolumeLauncher"}
+        {/fbvFormSection}
         {fbvFormButtons submitText="common.save" hideCancel=true}
     {/fbvFormArea}
 </form>

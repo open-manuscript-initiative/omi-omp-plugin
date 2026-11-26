@@ -150,6 +150,10 @@ class StudioIntegrationPlugin extends GenericPlugin
             'launchEndpoint' => $launchEndpoint,
             'mode' => $launchMode,
             'label' => __('plugins.generic.studioIntegration.openInStudio'),
+            'volumeEnabled' => $requestedPage === 'workflow' && $launchMode === 'editor'
+                && $this->volumeLauncherEnabled($context, $user),
+            'volumeLabel' => __('plugins.generic.studioIntegration.openVolumeInStudio'),
+            'openingLabel' => __('plugins.generic.studioIntegration.openingStudio'),
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
 
         if ($config === false) {
@@ -162,13 +166,13 @@ class StudioIntegrationPlugin extends GenericPlugin
             ['contexts' => ['backend']]
         );
         $templateMgr->addJavaScript(
-            'studioIntegrationLauncher140',
-            $pluginBase . '/js/studioIntegration.js?v=1.4.0',
+            'studioIntegrationLauncher141',
+            $pluginBase . '/js/studioIntegration.js?v=1.4.1',
             ['contexts' => ['backend']]
         );
         $templateMgr->addStyleSheet(
-            'studioIntegrationLauncher140',
-            $pluginBase . '/css/studioIntegration.css?v=1.4.0',
+            'studioIntegrationLauncher141',
+            $pluginBase . '/css/studioIntegration.css?v=1.4.1',
             ['contexts' => ['backend']]
         );
 
@@ -263,6 +267,14 @@ class StudioIntegrationPlugin extends GenericPlugin
     }
 
     /** Resolve current manager access and publication state for every volume request. */
+    public function volumeLauncherEnabled($context, $user): bool
+    {
+        return $context && $user && $this->getEnabled($context->getId())
+            && (bool)$this->getSetting($context->getId(), 'enableVolumeLauncher')
+            && ($user->hasRole([Role::ROLE_ID_MANAGER], $context->getId())
+                || $user->hasRole([Role::ROLE_ID_SITE_ADMIN], Application::SITE_CONTEXT_ID));
+    }
+
     public function volumeImportTarget($context, $user, int $submissionId, ?int $expectedPublicationId = null): ?array
     {
         if (!$context || !$user || $submissionId < 1 || !$this->getEnabled($context->getId())) return null;

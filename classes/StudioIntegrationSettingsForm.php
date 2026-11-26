@@ -28,6 +28,7 @@ class StudioIntegrationSettingsForm extends Form
         $this->setData('installationId', (string)$this->plugin->getSetting($this->contextId, 'installationId'));
         $this->setData('sharedSecret', $secret);
         $this->setData('tokenTtl', (int)($this->plugin->getSetting($this->contextId, 'tokenTtl') ?: 300));
+        $this->setData('enableVolumeLauncher', (bool)$this->plugin->getSetting($this->contextId, 'enableVolumeLauncher'));
         parent::initData();
     }
 
@@ -40,7 +41,7 @@ class StudioIntegrationSettingsForm extends Form
 
     public function readInputData(): void
     {
-        $this->readUserVars(['studioUrl', 'installationId', 'sharedSecret', 'tokenTtl']);
+        $this->readUserVars(['studioUrl', 'installationId', 'sharedSecret', 'tokenTtl', 'enableVolumeLauncher']);
         parent::readInputData();
     }
 
@@ -62,6 +63,7 @@ class StudioIntegrationSettingsForm extends Form
         $this->plugin->updateSetting($this->contextId, 'installationId', $installationId, 'string');
         $this->plugin->updateSetting($this->contextId, 'sharedSecret', $sharedSecret, 'string');
         $this->plugin->updateSetting($this->contextId, 'tokenTtl', $tokenTtl, 'int');
+        $this->plugin->updateSetting($this->contextId, 'enableVolumeLauncher', (bool)$this->getData('enableVolumeLauncher'), 'bool');
         parent::execute(...$functionArgs);
     }
 }

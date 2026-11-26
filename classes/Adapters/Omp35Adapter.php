@@ -171,7 +171,7 @@ final class Omp35Adapter
     {
         $dao = DAORegistry::getDAO('ChapterDAO');
         $result = [];
-        foreach ($dao->getByPublicationId($publicationId) as $chapter) {
+        foreach ($dao->getByPublicationId($publicationId)->toArray() as $chapter) {
             $authorIds = [];
             foreach ($chapter->getAuthors() as $author) {
                 $authorIds[] = (string)$author->getId();

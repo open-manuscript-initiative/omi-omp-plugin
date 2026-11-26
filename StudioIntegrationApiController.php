@@ -48,6 +48,18 @@ class StudioIntegrationApiController extends PKPBaseController
     {
         Route::get('', $this->capabilities(...))->name('api.omiIntegration.capabilities');
         Route::get('submission-options', $this->submissionOptions(...))->name('api.omiIntegration.submissionOptions');
+        Route::get('volumes/{submissionId}/import-manifest', $this->volumeImportManifest(...))
+            ->whereNumber('submissionId')
+            ->middleware(['has.user', self::roleAuthorizer([
+                Role::ROLE_ID_MANAGER,
+                Role::ROLE_ID_SITE_ADMIN,
+            ])])
+            ->name('api.omiIntegration.volumeImportManifest');
+        Route::get('volume-import/manifest', $this->signedVolumeManifest(...))
+            ->name('api.omiIntegration.signedVolumeManifest');
+        Route::get('volume-import/files/{submissionFileId}/content', $this->signedVolumeFile(...))
+            ->whereNumber('submissionFileId')
+            ->name('api.omiIntegration.signedVolumeFile');
         Route::get('submission', $this->submission(...))->name('api.omiIntegration.submission');
         Route::get('contributors', $this->contributors(...))->name('api.omiIntegration.contributors');
         Route::get('reviewers', $this->reviewers(...))->name('api.omiIntegration.reviewers');
@@ -523,6 +535,8 @@ class StudioIntegrationApiController extends PKPBaseController
             'capabilities' => [
                 'launch',
                 'metadata.read',
+                'editor.volume-manifest.read',
+                'volume.import.read',
                 'contributors.read',
                 'reviewers.read',
                 'files.read',
@@ -562,6 +576,176 @@ class StudioIntegrationApiController extends PKPBaseController
             'plannedCapabilities' => [
                 'review.recommendations.native',
             ],
+        ]);
+    }
+
+    /**
+     * Native authenticated read-only manifest for the current unpublished Production volume.
+     * Never accepts a review assertion as a native editorial credential.
+     */
+    public function volumeImportManifest(IlluminateRequest $input): JsonResponse
+    {
+        $request = Application::get()->getRequest();
+        $context = $request->getContext();
+        $user = $request->getUser();
+        if (!$context || !$user || !$this->plugin->getEnabled($context->getId())) {
+            return $this->error('editor_required', 'An enabled press and authenticated manager are required.', 403);
+        }
+        $adapter = new Omp35Adapter();
+        $submissionId = (int)$input->route('submissionId');
+        $submission = $adapter->getSubmission($submissionId, (int)$context->getId());
+        if (!$submission) {
+            return $this->error('submission_not_found', 'Volume not found.', 404);
+        }
+        $stages = Repo::user()->getAccessibleWorkflowStages($user->getId(), $context->getId(), $submission);
+        if (!array_intersect($stages[WORKFLOW_STAGE_ID_PRODUCTION] ?? [], [Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN])) {
+            return $this->error('editor_required', 'Manager access to this volume in Production is required.', 403);
+        }
+        $publication = Repo::publication()->get((int)$submission->getData('currentPublicationId'));
+        if (!$publication || (int)$submission->getData('stageId') !== WORKFLOW_STAGE_ID_PRODUCTION
+            || (int)$publication->getData('status') !== Submission::STATUS_QUEUED) {
+            return $this->error('volume_not_ready', 'The volume must be the current unpublished Production version.', 409);
+        }
+        return $this->buildVolumeManifest($context, $submission, $publication, false);
+    }
+
+    private function buildVolumeManifest(object $context, object $submission, object $publication, bool $signed): JsonResponse
+    {
+        $request = Application::get()->getRequest();
+        $adapter = new Omp35Adapter();
+        $submissionId = (int)$submission->getId();
+        $publicationId = (int)$publication->getId();
+        $volume = $adapter->mapSubmission($submission);
+        $chapters = $adapter->mapVolumeChapters($publicationId);
+        $contributors = $adapter->mapContributors($submission);
+        foreach ($contributors as &$contributor) {
+            unset($contributor['email']);
+        }
+        unset($contributor);
+        $chapterIds = array_column($chapters, 'externalId');
+        $sources = Omp35Adapter::volumeSourceDescriptors($adapter->mapFiles($submission), $chapterIds);
+        if ($signed) {
+            foreach ($sources as &$source) {
+                $source['contentPath'] = 'volume-import/files/' . rawurlencode($source['externalId']) . '/content';
+            }
+            unset($source);
+        }
+        $current = $adapter->getSubmission($submissionId, (int)$context->getId());
+        $currentPublication = $current ? Repo::publication()->get((int)$current->getData('currentPublicationId')) : null;
+        if (!$current || !$currentPublication || (int)$currentPublication->getId() !== $publicationId
+            || (string)$publicationId !== $volume['publicationExternalId']
+            || (int)$current->getData('stageId') !== WORKFLOW_STAGE_ID_PRODUCTION
+            || (int)$currentPublication->getData('status') !== Submission::STATUS_QUEUED) {
+            return $this->error('volume_changed', 'Volume changed during manifest projection; reload.', 409);
+        }
+        return response()->json([
+            'protocol' => 'omi-integration/1',
+            'profile' => Omp35Adapter::PROFILE,
+            'installationId' => $this->plugin->getInstallationId($context->getId(), $request),
+            'context' => $adapter->mapContext($context, $request),
+            'volume' => $volume,
+            'workType' => (int)$submission->getData('workType') === Submission::WORK_TYPE_EDITED_VOLUME
+                ? 'edited-volume' : 'authored-work',
+            'doi' => $publication->getDoi(),
+            'chapters' => $chapters,
+            'contributors' => $contributors,
+            'sources' => $sources,
+            'binaryTransfer' => ['available' => $signed],
+        ])->header('Cache-Control', 'private, no-store');
+    }
+
+    private function authorizeVolumeImport(IlluminateRequest $input): array|JsonResponse
+    {
+        $request = Application::get()->getRequest();
+        $context = $request->getContext();
+        if (!$context || !$this->plugin->getEnabled($context->getId())) {
+            return $this->error('context_required', 'An enabled press is required.', 403);
+        }
+        $authorization = trim((string)$input->header('Authorization', ''));
+        if (!preg_match('/^OMI\\s+([A-Za-z0-9_-]+)\\.([A-Za-z0-9_-]+)$/', $authorization, $matches)) {
+            return $this->error('authentication_required', 'A signed volume assertion is required.', 401);
+        }
+        $secret = (string)$this->plugin->getSetting($context->getId(), 'sharedSecret');
+        $claims = $secret !== '' ? LaunchToken::verify($matches[1], $matches[2], $secret, $context->getId()) : null;
+        if (!$claims || ($claims['profile'] ?? null) !== Omp35Adapter::PROFILE
+            || ($claims['actorMode'] ?? null) !== 'volume'
+            || ($claims['scope'] ?? null) !== ['volume.import.read']
+            || ($claims['installationId'] ?? null) !== $this->plugin->getInstallationId($context->getId(), $request)
+            || ($claims['context']['type'] ?? null) !== 'press'
+            || ($claims['context']['path'] ?? null) !== $context->getPath()
+            || isset($claims['submission']) || isset($claims['component'])
+            || !is_string($claims['nonce'] ?? null) || !preg_match('/^[a-f0-9]{32}$/D', $claims['nonce'])
+            || (int)$claims['exp'] <= (int)$claims['iat']
+            || (int)$claims['exp'] - (int)$claims['iat'] > 300) {
+            return $this->error('invalid_assertion', 'Invalid or expired volume assertion.', 401);
+        }
+        $submissionId = (int)($claims['volume']['submissionId'] ?? 0);
+        $publicationId = (int)($claims['volume']['publicationId'] ?? 0);
+        $actorId = (int)($claims['actor']['externalId'] ?? 0);
+        if ($submissionId < 1 || $publicationId < 1 || $actorId < 1) {
+            return $this->error('invalid_assertion', 'Missing volume or actor identity.', 401);
+        }
+        $actor = Repo::user()->get($actorId);
+        $target = $this->plugin->volumeImportTarget($context, $actor, $submissionId, $publicationId);
+        if (!$target) {
+            return $this->error('volume_forbidden', 'Manager access or current unpublished volume changed.', 403);
+        }
+        return [$context, $target[0], $target[1]];
+    }
+
+    public function signedVolumeManifest(IlluminateRequest $input): JsonResponse
+    {
+        $authorized = $this->authorizeVolumeImport($input);
+        if ($authorized instanceof JsonResponse) return $authorized;
+        [$context, $submission, $publication] = $authorized;
+        return $this->buildVolumeManifest($context, $submission, $publication, true);
+    }
+
+    public function signedVolumeFile(IlluminateRequest $input): BinaryFileResponse|JsonResponse
+    {
+        $authorized = $this->authorizeVolumeImport($input);
+        if ($authorized instanceof JsonResponse) return $authorized;
+        [$context, $submission, $publication] = $authorized;
+        $adapter = new Omp35Adapter();
+        $chapterIds = array_column($adapter->mapVolumeChapters((int)$publication->getId()), 'externalId');
+        $sources = Omp35Adapter::volumeSourceDescriptors($adapter->mapFiles($submission), $chapterIds);
+        $id = (int)$input->route('submissionFileId');
+        $candidate = null;
+        foreach ($sources as $source) {
+            if ((int)$source['externalId'] === $id) {
+                $candidate = $source;
+                break;
+            }
+        }
+        if (!$candidate) return $this->error('file_forbidden', 'File is not an eligible source of this volume.', 404);
+        $submissionFile = Repo::submissionFile()->get($id, (int)$submission->getId());
+        if (!$submissionFile || (int)$submissionFile->getData('submissionId') !== (int)$submission->getId()
+            || (int)$submissionFile->getData('fileStage') !== (int)$candidate['stage']
+            || (int)$submissionFile->getData('genreId') !== (int)$candidate['genreExternalId']
+            || (string)$submissionFile->getData('chapterId') !== (string)$candidate['chapterExternalId']
+            || (string)$submissionFile->getData('revision') !== (string)$candidate['revision']) {
+            return $this->error('file_changed', 'Source changed; reload the volume manifest.', 409);
+        }
+        $fileId = (int)$submissionFile->getData('fileId');
+        $stored = $fileId > 0 ? app()->get('file')->get($fileId) : null;
+        $root = realpath((string)Config::getVar('files', 'files_dir'));
+        $path = $root && $stored && !empty($stored->path) ? realpath($root . '/' . ltrim((string)$stored->path, '/')) : false;
+        if (!$path || !str_starts_with($path, rtrim($root, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR)
+            || !is_file($path) || !is_readable($path)) {
+            return $this->error('file_not_found', 'Stored source is unavailable.', 404);
+        }
+        $size = filesize($path);
+        if ($size === false || $size > 32 * 1024 * 1024) {
+            return $this->error('source_too_large', 'Volume source exceeds 32 MiB.', 413);
+        }
+        // Revalidate the actor, current publication and press immediately before responding.
+        $rechecked = $this->authorizeVolumeImport($input);
+        if ($rechecked instanceof JsonResponse) return $rechecked;
+        return response()->file($path, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'Content-Disposition' => "attachment; filename*=UTF-8''" . rawurlencode((string)$candidate['name']),
+            'Cache-Control' => 'private, no-store',
+            'X-Content-Type-Options' => 'nosniff',
         ]);
     }
 

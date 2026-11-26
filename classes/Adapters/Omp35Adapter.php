@@ -5,6 +5,7 @@ use APP\core\Application;
 use APP\facades\Repo;
 use PKP\controlledVocab\ControlledVocab;
 use PKP\db\DAORegistry;
+use PKP\submissionFile\SubmissionFile;
 
 final class Omp35Adapter
 {
@@ -162,6 +163,61 @@ final class Omp35Adapter
                 'updatedAt' => $this->formatDate($file->getData('updatedAt')),
             ];
         }
+        return $result;
+    }
+
+    /** Ordered chapters of exactly the selected current publication. */
+    public function mapVolumeChapters(int $publicationId): array
+    {
+        $dao = DAORegistry::getDAO('ChapterDAO');
+        $result = [];
+        foreach ($dao->getByPublicationId($publicationId)->toArray() as $chapter) {
+            $authorIds = [];
+            foreach ($chapter->getAuthors() as $author) {
+                $authorIds[] = (string)$author->getId();
+            }
+            $result[] = [
+                'externalId' => (string)$chapter->getId(),
+                'sourceChapterId' => $chapter->getSourceChapterId() !== null
+                    ? (string)$chapter->getSourceChapterId() : null,
+                'publicationExternalId' => (string)$publicationId,
+                'sequence' => $chapter->getSequence(),
+                'title' => $this->normalizeLocaleObject($chapter->getTitle()),
+                'subtitle' => $this->normalizeLocaleObject($chapter->getSubtitle()),
+                'abstract' => $this->normalizeLocaleObject($chapter->getAbstract()),
+                'doi' => $chapter->getDoi(),
+                'pages' => $chapter->getPages(),
+                'contributorExternalIds' => $authorIds,
+            ];
+        }
+        usort($result, static fn (array $a, array $b): int =>
+            ($a['sequence'] <=> $b['sequence']) ?: ((int)$a['externalId'] <=> (int)$b['externalId']));
+        return $result;
+    }
+
+    /** Candidate DOCX descriptors, not download grants. Never guess chapter ownership. */
+    public static function volumeSourceDescriptors(array $files, array $chapterIds): array
+    {
+        $priority = [
+            SubmissionFile::SUBMISSION_FILE_PRODUCTION_READY => 0,
+            SubmissionFile::SUBMISSION_FILE_COPYEDIT => 1,
+            SubmissionFile::SUBMISSION_FILE_FINAL => 2,
+            SubmissionFile::SUBMISSION_FILE_SUBMISSION => 3,
+        ];
+        $result = array_values(array_filter($files, static function (array $file) use ($priority, $chapterIds): bool {
+            $chapterId = $file['chapterExternalId'] ?? null;
+            $genre = strtoupper(trim((string)($file['genreKey'] ?? '')));
+            return isset($priority[(int)($file['stage'] ?? 0)])
+                && (($genre === 'MANUSCRIPT' && $chapterId === null)
+                    || ($genre === 'CHAPTER' && $chapterId !== null && in_array((string)$chapterId, $chapterIds, true)))
+                && (strtolower((string)($file['mediaType'] ?? '')) === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                    || str_ends_with(strtolower((string)($file['name'] ?? '')), '.docx'));
+        }));
+        usort($result, static fn (array $a, array $b): int =>
+            ($priority[(int)$a['stage']] <=> $priority[(int)$b['stage']])
+            ?: strcmp((string)($b['updatedAt'] ?? ''), (string)($a['updatedAt'] ?? ''))
+            ?: ((int)($b['revision'] ?? 0) <=> (int)($a['revision'] ?? 0))
+            ?: ((int)$b['externalId'] <=> (int)$a['externalId']));
         return $result;
     }
 

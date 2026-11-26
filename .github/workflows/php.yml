@@ -37,6 +37,9 @@ jobs:
       - name: Check publication artifact provenance
         run: php tests/publication-artifact-document.php
 
+      - name: Check volume manifest contract
+        run: php tests/volume-import-manifest.php
+
       - name: Check contributor metadata contract
         run: php tests/contributor-metadata-contract.php
 

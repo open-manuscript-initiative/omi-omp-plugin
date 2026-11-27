@@ -260,7 +260,7 @@ if (!$htmlFormat || $htmlFormat['available'] !== false) {
     throw new RuntimeException('HTML reader availability was not reflected in capabilities');
 }
 
-function epubFixture(bool $active = false): string
+function epubFixture(bool $active = false, bool $rich = false, bool $broken = false): string
 {
     $tmp = tmpfile();
     $zip = new ZipArchive();
@@ -270,7 +270,7 @@ function epubFixture(bool $active = false): string
         'META-INF/container.xml' => '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
         'EPUB/package.opf' => '<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><manifest><item id="article" href="article.xhtml" media-type="application/xhtml+xml"/><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="css" href="styles.css" media-type="text/css"/></manifest><spine><itemref idref="article"/></spine></package>',
         'EPUB/nav.xhtml' => '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Contents</title></head><body><nav><ol><li><a href="article.xhtml#sec-one">One</a></li></ol></nav></body></html>',
-        'EPUB/article.xhtml' => '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Book</title></head><body><p>Text</p>' . ($active ? '<script>bad()</script>' : '') . '</body></html>',
+        'EPUB/article.xhtml' => '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Book</title></head><body><section id="sec-one"><p>Text</p></section>' . ($rich ? '<p><em>Emphasis</em><sup><a role="doc-noteref" href="#note-one">1</a></sup></p><table><tbody><tr><td>Data</td></tr></tbody></table><ol><li id="note-one">Note</li></ol>' : '') . ($broken ? '<a href="#missing">Broken</a>' : '') . ($active ? '<script>bad()</script>' : '') . '</body></html>',
         'EPUB/styles.css' => 'body{font-family:serif}',
     ];
     foreach ($entries as $name => $value) {
@@ -286,6 +286,12 @@ function epubFixture(bool $active = false): string
 $epub = epubFixture();
 $epubBuild = buildManifest('epub', 'application/epub+zip', 'book.epub', $epub);
 PublicationArtifactDocument::validateTransfer('epub', 'application/epub+zip', 'book.epub', base64_encode($epub), $epubBuild, 'manuscript-1');
+$richEpub = epubFixture(false, true);
+PublicationArtifactDocument::validateTransfer('epub', 'application/epub+zip', 'rich.epub', base64_encode($richEpub),
+    buildManifest('epub', 'application/epub+zip', 'rich.epub', $richEpub), 'manuscript-1');
+$brokenEpub = epubFixture(false, true, true);
+expectInvalid(fn() => PublicationArtifactDocument::validateTransfer('epub', 'application/epub+zip', 'broken.epub', base64_encode($brokenEpub),
+    buildManifest('epub', 'application/epub+zip', 'broken.epub', $brokenEpub), 'manuscript-1'), 'Broken internal EPUB link accepted');
 $activeEpub = epubFixture(true);
 expectInvalid(fn() => PublicationArtifactDocument::validateTransfer('epub', 'application/epub+zip', 'book.epub', base64_encode($activeEpub),
     buildManifest('epub', 'application/epub+zip', 'book.epub', $activeEpub), 'manuscript-1'), 'Active EPUB accepted');

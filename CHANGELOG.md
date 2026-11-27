@@ -1,10 +1,14 @@
 # Changelog
 
-## Unreleased — 2026-11-07
+## 1.6.0.0 — 2026-11-27
 
-- Extend installation CI to OMP 3.5.0-6 while retaining -4/-5.
-- Verify the actual checked-out PKP version before recording a compatibility smoke result.
-
+- Add manager-scoped signed complete-volume import, ordered chapter manifests and protected chapter DOCX retrieval (#27).
+- Add opt-in native volume launcher and press, series, ISSN and publication-format metadata (#28).
+- Add authenticated chapter printed page-range inspection and confirmed transactional writeback (#29).
+- Accept provenance-verified EPUB 3 proofs with static scholarly XHTML and bounded manifest-declared raster resources (#30). Native approval, availability and publication remain separate.
+- Test OMP 3.5.0-4/-5/-6 with PHP 8.3 and 3.5.0-6 with PHP 8.4; retire PHP 8.2. EPUB transfer requires PHP ZipArchive.
+- Complete-volume workflows require a compatible Studio receiver; native production acceptance and Studio EPUBCheck rollout remain separate.
+- Verify the actual checked-out PKP version before recording compatibility results. Publish only exact main commits that pass PHP and native OMP compatibility checks; manual release cannot rewrite version metadata.
 
 ## 1.5.1.0 — 2026-09-19
 

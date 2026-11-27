@@ -4,7 +4,7 @@ Open Monograph Press integration plugin for connecting OMP with the Open Manuscr
 
 ## Status
 
-Release candidate targeting **OMP 3.5.x**, **PHP 8.3 and 8.4**, and the OMI Integration API v1. Native Studio writeback requires plugin **1.5.0.0** or newer.
+Current source version: **1.6.0.0**. Targeting **OMP 3.5.x**, **PHP 8.3 and 8.4**, and the OMI Integration API v1. Native Studio writeback requires plugin **1.5.0.0** or newer.
 
 Profile identifier:
 
@@ -101,7 +101,9 @@ The repository and release package follow the PKP generic-plugin package layout 
 - native reviewer recommendation support if/when the host OMP version exposes it;
 - automated OMP installation-level integration tests in addition to PHP/package CI.
 
-## Publication artifacts from Studio (1.4.0)
+## Publication artifacts from Studio (1.4.0+)
+
+Version 1.6.0 adds EPUB 3 proof transfer (requires PHP ZipArchive), complete-volume import, series and publication-format metadata, and chapter printed page writeback. Compatible Studio functionality is required; the native plugin does not publish automatically. Releases require successful PHP and native OMP integration CI for the exact main commit.
 
 `POST /api/v1/omi-integration/publication-artifact` accepts provenance-bound
 HTML, JATS XML, print PDF and interactive PDF builds for the current unpublished

@@ -83,7 +83,7 @@ class StudioIntegrationNativeApiController extends PKPBaseController
             'profile' => Omp35Adapter::PROFILE,
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OMP',
-                'version' => '1.5.1',
+                'version' => '1.6.0',
                 'platform' => 'omp',
             ],
             'nativeApis' => [

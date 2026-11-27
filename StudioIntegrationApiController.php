@@ -69,6 +69,9 @@ class StudioIntegrationApiController extends PKPBaseController
             ->whereNumber('submissionFileId')
             ->name('api.omiIntegration.fileContent');
         Route::post('review-result', $this->reviewResult(...))->name('api.omiIntegration.reviewResult');
+        Route::post('chapter-page-range', $this->chapterPageRange(...))
+            ->middleware(['has.user', self::roleAuthorizer([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN])])
+            ->name('api.omiIntegration.chapterPageRange');
         Route::post('publication-artifact', $this->publicationArtifact(...))
             ->middleware(['has.user', self::roleAuthorizer([
                 Role::ROLE_ID_MANAGER,
@@ -94,6 +97,97 @@ class StudioIntegrationApiController extends PKPBaseController
      * changed artifact cannot replace a format that an editor has already
      * approved, made available, or made viewable in the native OMP workflow.
      */
+    public function chapterPageRange(IlluminateRequest $input): JsonResponse
+    {
+        $data = $input->validate([
+            'action' => 'required|in:inspect,apply',
+            'installationId' => 'required|string|max:255',
+            'contextId' => 'required|integer|min:1',
+            'submissionId' => 'required|integer|min:1',
+            'publicationId' => 'required|integer|min:1',
+            'chapterId' => 'required|integer|min:1',
+            'firstPrintedPage' => 'required_if:action,apply|integer|min:1|max:999999',
+            'lastPrintedPage' => 'required_if:action,apply|integer|min:1|max:999999',
+            'expectedWorkflowToken' => 'required_if:action,apply|string|size:64',
+            'confirmed' => 'required_if:action,apply|accepted',
+        ]);
+        $request = Application::get()->getRequest();
+        $context = $request->getContext();
+        $user = $request->getUser();
+        if (!$context || !$user || !$this->plugin->getEnabled($context->getId())
+            || (int)$context->getId() !== (int)$data['contextId']
+            || !hash_equals($this->plugin->getInstallationId($context->getId(), $request), $data['installationId'])) {
+            return $this->error('editor_required', 'Matching authenticated press installation required.', 403);
+        }
+        $submissionId = (int)$data['submissionId'];
+        $publicationId = (int)$data['publicationId'];
+        $chapterId = (int)$data['chapterId'];
+        $dao = DAORegistry::getDAO('ChapterDAO');
+        $load = function () use ($context, $user, $submissionId, $publicationId, $chapterId, $dao) {
+            $target = $this->plugin->volumeImportTarget($context, $user, $submissionId, $publicationId);
+            if (!$target || !Repo::submission()->canEditPublication($submissionId, $user->getId())) {
+                abort(403, 'Native editorial permission on the exact unpublished Production version required.');
+            }
+            $chapter = $dao->getChapter($chapterId, $publicationId);
+            if (!$chapter || (int)$chapter->getData('publicationId') !== $publicationId) {
+                abort(404, 'Chapter not found in the selected publication.');
+            }
+            return [$target[0], $target[1], $chapter];
+        };
+        $snapshot = function ($submission, $publication, $chapter) use ($data, $context) {
+            $state = [
+                'protocol' => 'omi-chapter-page-range/1',
+                'installationId' => $data['installationId'],
+                'contextId' => (int)$context->getId(),
+                'submissionId' => (int)$submission->getId(),
+                'publicationId' => (int)$publication->getId(),
+                'chapterId' => (int)$chapter->getId(),
+                'sourceChapterId' => $chapter->getSourceChapterId(),
+                'pages' => $chapter->getPages(),
+                'published' => false,
+            ];
+            $state['workflowToken'] = hash('sha256', json_encode([
+                $state, $submission->getData('stageId'), $submission->getData('status'),
+                $publication->getData('status'), $publication->getData('lastModified'),
+                $chapter->getSequence(), $chapter->getTitle(), $chapter->getSubtitle(),
+                $chapter->getAbstract(), $chapter->getDoi(), $chapter->isPageEnabled(),
+            ], JSON_THROW_ON_ERROR));
+            return $state;
+        };
+        if ($data['action'] === 'inspect') {
+            return response()->json(['snapshot' => $snapshot(...$load())])->header('Cache-Control', 'private, no-store');
+        }
+        $first = (int)$data['firstPrintedPage'];
+        $last = (int)$data['lastPrintedPage'];
+        if ($last < $first) return $this->error('invalid_page_range', 'Printed pages must be ordered.', 422);
+        $pages = $first === $last ? (string)$first : $first . '-' . $last;
+        $result = DB::transaction(function () use ($data, $submissionId, $publicationId, $chapterId, $dao, $load, $snapshot, $pages) {
+            DB::table('submissions')->where('submission_id', $submissionId)->lockForUpdate()->first();
+            DB::table('publications')->where('publication_id', $publicationId)->lockForUpdate()->first();
+            DB::table('submission_chapters')->where('chapter_id', $chapterId)->where('publication_id', $publicationId)->lockForUpdate()->first();
+            DB::table('submission_chapter_settings')->where('chapter_id', $chapterId)->lockForUpdate()->get();
+            [$submission, $publication, $chapter] = $load();
+            $before = $snapshot($submission, $publication, $chapter);
+            if (!hash_equals($before['workflowToken'], $data['expectedWorkflowToken'])) abort(409, 'OMP chapter or workflow changed. Inspect again.');
+            $changed = $before['pages'] !== $pages;
+            if ($changed) {
+                $chapter->setPages($pages);
+                $dao->updateLocaleFields($chapter);
+            }
+            $after = $snapshot(...$load());
+            if ($after['pages'] !== $pages) abort(409, 'OMP did not retain the requested page range.');
+            return ['snapshot' => $after, 'receipt' => [
+                'protocol' => 'omi-chapter-page-range/1',
+                'installationId' => $after['installationId'], 'contextId' => $after['contextId'],
+                'submissionId' => $submissionId, 'publicationId' => $publicationId, 'chapterId' => $chapterId,
+                'previousPages' => $before['pages'], 'pages' => $pages,
+                'previousWorkflowToken' => $before['workflowToken'], 'workflowToken' => $after['workflowToken'],
+                'unchanged' => !$changed, 'published' => false,
+            ]];
+        });
+        return response()->json($result)->header('Cache-Control', 'private, no-store');
+    }
+
     public function publicationArtifact(IlluminateRequest $input): JsonResponse
     {
         $data = $input->validate([
@@ -536,6 +630,7 @@ class StudioIntegrationApiController extends PKPBaseController
                 'launch',
                 'metadata.read',
                 'editor.volume-manifest.read',
+                'editor.chapter-page-range.write',
                 'volume.import.read',
                 'contributors.read',
                 'reviewers.read',

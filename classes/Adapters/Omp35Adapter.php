@@ -166,6 +166,44 @@ final class Omp35Adapter
         return $result;
     }
 
+    /** Metadata belongs to the selected press, series and publication formats. */
+    public function mapVolumePublicationMatter(object $context, object $publication): array
+    {
+        $contextId = (int)$context->getId();
+        $seriesId = (int)$publication->getData('seriesId');
+        $series = $seriesId > 0 ? Repo::section()->get($seriesId, $contextId) : null;
+        $formats = [];
+        foreach (Application::getRepresentationDAO()->getByPublicationId((int)$publication->getId(), $contextId) as $format) {
+            $codes = [];
+            foreach ($format->getIdentificationCodes()->toArray() as $code) {
+                $value = trim((string)$code->getValue());
+                if ($value !== '') $codes[] = ['type' => (string)$code->getCode(), 'value' => $value];
+            }
+            $formats[] = [
+                'externalId' => (string)$format->getId(),
+                'name' => $this->normalizeLocaleObject($format->getData('name')),
+                'physical' => (bool)$format->getPhysicalFormat(),
+                'onixProductForm' => $format->getEntryKey(),
+                'imprint' => $this->nullableString($format->getImprint()),
+                'identifiers' => $codes,
+            ];
+        }
+        return [
+            'publisher' => $this->nullableString($context->getData('publisher')),
+            'pressName' => $this->normalizeLocaleObject($context->getData('name')),
+            'publicationPlace' => $this->nullableString($context->getData('location')),
+            'series' => $series ? [
+                'externalId' => (string)$series->getId(),
+                'title' => $this->normalizeLocaleObject($series->getTitle(null)),
+                'subtitle' => $this->normalizeLocaleObject($series->getSubtitle(null)),
+                'position' => $publication->getData('seriesPosition'),
+                'printIssn' => $series->getPrintISSN(),
+                'onlineIssn' => $series->getOnlineISSN(),
+            ] : null,
+            'formats' => $formats,
+        ];
+    }
+
     /** Ordered chapters of exactly the selected current publication. */
     public function mapVolumeChapters(int $publicationId): array
     {

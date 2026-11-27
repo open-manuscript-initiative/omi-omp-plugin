@@ -21,3 +21,12 @@ msgstr "Shared secret"
 
 msgid "plugins.generic.studioIntegration.settings.tokenTtl"
 msgstr "Token lifetime (seconds)"
+
+msgid "plugins.generic.studioIntegration.openVolumeInStudio"
+msgstr "Open complete volume in Studio"
+
+msgid "plugins.generic.studioIntegration.openingStudio"
+msgstr "Opening Studio…"
+
+msgid "plugins.generic.studioIntegration.settings.enableVolumeLauncher"
+msgstr "Enable experimental complete-volume launcher (requires a compatible Studio)"

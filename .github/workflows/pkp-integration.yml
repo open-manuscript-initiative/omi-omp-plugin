@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   omp-integration:
-    name: OMP ${{ matrix.pkp-ref }} integration
+    name: OMP ${{ matrix.pkp-ref }} / PHP ${{ matrix.php-version }} integration
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -35,6 +35,10 @@ jobs:
             pkp-ref: 3_5_0-6
             php-version: 8.3
             database: mysql
+          - application: omp
+            pkp-ref: 3_5_0-6
+            php-version: 8.4
+            database: mysql
 
     steps:
       - name: Check out the plugin
@@ -48,6 +52,13 @@ jobs:
           branch: ${{ matrix.pkp-ref }}
           repository: pkp
           node_version: 20
+
+      - name: Select PHP for native OMP integration
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          coverage: none
+          extensions: mbstring, xml, mysqli, pdo_mysql, intl, gd, zip
 
       - name: Load the plugin in OMP
         env:

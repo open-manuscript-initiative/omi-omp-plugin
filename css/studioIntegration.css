@@ -56,3 +56,11 @@
 .omi-studio-launcher--error:focus {
   background: #7d1515 !important;
 }
+
+/* Keep the existing manuscript launcher visible; do not overlap its button. */
+.omi-studio-launcher--volume {
+  top: max(4rem, calc(env(safe-area-inset-top, 0px) + 3.5rem)) !important;
+  background: #005e58 !important;
+}
+.omi-studio-launcher--volume:hover,
+.omi-studio-launcher--volume:focus { background: #00443f !important; }

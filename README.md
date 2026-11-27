@@ -4,7 +4,7 @@ Open Monograph Press integration plugin for connecting OMP with the Open Manuscr
 
 ## Status
 
-Release candidate targeting **OMP 3.5.x**, **PHP 8.2+**, and the OMI Integration API v1. Native Studio writeback requires plugin **1.5.0.0** or newer.
+Release candidate targeting **OMP 3.5.x**, **PHP 8.3 and 8.4**, and the OMI Integration API v1. Native Studio writeback requires plugin **1.5.0.0** or newer.
 
 Profile identifier:
 
@@ -72,7 +72,7 @@ The connector preserves monograph semantics and PKP authorization boundaries. In
 | Component | Supported |
 | --- | --- |
 | Open Monograph Press | 3.5.x |
-| PHP | 8.2, 8.3, 8.4 |
+| PHP | 8.3, 8.4 (primary: OMP 3.5.0-6 / PHP 8.4) |
 | Plugin type | Generic plugin |
 | Package directory | `plugins/generic/studioIntegration` |
 | License | GPL-3.0 |

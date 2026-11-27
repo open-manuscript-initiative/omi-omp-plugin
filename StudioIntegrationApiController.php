@@ -647,6 +647,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'workType' => (int)$submission->getData('workType') === Submission::WORK_TYPE_EDITED_VOLUME
                 ? 'edited-volume' : 'authored-work',
             'doi' => $publication->getDoi(),
+            'publicationMatter' => $adapter->mapVolumePublicationMatter($context, $publication),
             'chapters' => $chapters,
             'contributors' => $contributors,
             'sources' => $sources,

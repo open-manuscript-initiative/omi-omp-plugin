@@ -1,9 +1,12 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.4.0';
+  var VERSION = '1.4.1';
   var GLOBAL_KEY = '__OMI_STUDIO_LAUNCHER__';
   var LAUNCHER_ID = 'omi-studio-launcher';
+  var VOLUME_ID = 'omi-studio-volume-launcher';
+  var volumeRequest = 0;
+  var checkedVolume = null;
 
   if (window[GLOBAL_KEY] && typeof window[GLOBAL_KEY].mount === 'function') {
     window[GLOBAL_KEY].mount();
@@ -58,12 +61,13 @@
     if (existing) existing.remove();
   }
 
-  function createDirectLaunchUrl(config, submissionId) {
+  function createDirectLaunchUrl(config, submissionId, mode) {
     var endpoint = new URL(config.launchEndpoint, window.location.origin);
     endpoint.searchParams.set('submissionId', submissionId);
 
-    if (config.mode && config.mode !== 'auto') {
-      endpoint.searchParams.set('mode', config.mode);
+    var launchMode = mode || config.mode;
+    if (launchMode && launchMode !== 'auto') {
+      endpoint.searchParams.set('mode', launchMode);
     }
 
     endpoint.searchParams.set('redirect', '1');
@@ -71,14 +75,15 @@
     return endpoint.toString();
   }
 
-  function createLauncher(config, submissionId) {
+  function createLauncher(config, submissionId, volume) {
     var button = document.createElement('button');
     var label = config.label || (
       config.mode === 'review' ? 'Open in Studio for Review' : 'Open in Studio'
     );
 
-    button.id = LAUNCHER_ID;
-    button.className = 'omi-studio-launcher';
+    if (volume) label = config.volumeLabel || 'Open complete volume in Studio';
+    button.id = volume ? VOLUME_ID : LAUNCHER_ID;
+    button.className = 'omi-studio-launcher' + (volume ? ' omi-studio-launcher--volume' : '');
     button.type = 'button';
     button.textContent = label;
     button.setAttribute('aria-label', label);
@@ -97,12 +102,44 @@
       button.disabled = true;
       button.classList.add('omi-studio-launcher--loading');
       button.setAttribute('aria-busy', 'true');
-      button.textContent = 'Opening Studio…';
-      window.location.assign(createDirectLaunchUrl(config, submissionId));
+      button.textContent = config.openingLabel || 'Opening Studio…';
+      window.location.assign(createDirectLaunchUrl(config, submissionId, volume ? 'volume' : null));
     }, true);
 
     document.body.appendChild(button);
     return button;
+  }
+
+  function removeVolume() {
+    var button = document.getElementById(VOLUME_ID);
+    if (button) button.remove();
+  }
+
+  function checkVolume(config, submissionId) {
+    if (!config.volumeEnabled || !submissionId) {
+      volumeRequest += 1;
+      checkedVolume = null;
+      removeVolume();
+      return;
+    }
+    if (checkedVolume === submissionId) return;
+    checkedVolume = submissionId;
+    removeVolume();
+    var generation = ++volumeRequest;
+    var url = new URL(config.launchEndpoint, window.location.origin);
+    if (url.origin !== window.location.origin) return;
+    url.searchParams.set('submissionId', submissionId);
+    url.searchParams.set('mode', 'volume-check');
+    url.searchParams.delete('redirect');
+    fetch(url.toString(), {credentials: 'same-origin', cache: 'no-store', headers: {Accept: 'application/json'}})
+      .then(function (response) { return response.ok ? response.json() : null; })
+      .then(function (data) {
+        if (generation !== volumeRequest || getSubmissionId() !== submissionId) return;
+        if (data && data.status === true && data.content && data.content.eligible === true) {
+          createLauncher(config, submissionId, true);
+        }
+      })
+      .catch(function () { /* Fail closed; ordinary manuscript launch stays available. */ });
   }
 
   function mount() {
@@ -112,6 +149,7 @@
     if (!config || !config.launchEndpoint) return;
 
     var submissionId = getSubmissionId();
+    checkVolume(config, submissionId);
     if (!submissionId) {
       lastSubmissionId = null;
       removeLauncher();
@@ -149,19 +187,26 @@
     mount();
   }
 
-  window.addEventListener('popstate', scheduleMount);
+  function refreshVolume() {
+    checkedVolume = null;
+    scheduleMount();
+  }
+  window.addEventListener('popstate', refreshVolume);
+  window.addEventListener('pageshow', refreshVolume);
+  // PKP can advance a workflow in place without changing the submission URL.
+  window.setInterval(refreshVolume, 30000);
 
   var originalPushState = history.pushState;
   history.pushState = function () {
     var result = originalPushState.apply(this, arguments);
-    scheduleMount();
+    refreshVolume();
     return result;
   };
 
   var originalReplaceState = history.replaceState;
   history.replaceState = function () {
     var result = originalReplaceState.apply(this, arguments);
-    scheduleMount();
+    refreshVolume();
     return result;
   };
 

@@ -96,5 +96,22 @@ namespace {
     if (!str_contains($handlerSource, "requestedMode === 'volume'") || !str_contains($handlerSource, 'createVolumeLaunchUrl')) {
         throw new \RuntimeException('Explicit volume launch must not fall back to ordinary editor mode.');
     }
+    $js = file_get_contents(__DIR__ . '/../js/studioIntegration.js');
+    $settings = file_get_contents(__DIR__ . '/../classes/StudioIntegrationSettingsForm.php');
+    foreach (['volumeLauncherEnabled', 'enableVolumeLauncher', "'volumeEnabled'"] as $guard) {
+        if (!str_contains($plugin, $guard)) throw new \RuntimeException('Missing native launcher guard: ' . $guard);
+    }
+    foreach (["requestedMode === 'volume-check'", 'volumeLauncherEnabled', 'volumeImportTarget'] as $guard) {
+        if (!str_contains($handlerSource, $guard)) throw new \RuntimeException('Missing launcher preflight: ' . $guard);
+    }
+    foreach (['volume-check', 'data.content.eligible === true', "volume ? 'volume' : null", 'generation !== volumeRequest'] as $guard) {
+        if (!str_contains($js, $guard)) throw new \RuntimeException('Missing launcher client guard: ' . $guard);
+    }
+    if (!str_contains($settings, 'enableVolumeLauncher')) throw new \RuntimeException('Missing opt-in setting.');
+    $adapterSource = file_get_contents(__DIR__ . '/../classes/Adapters/Omp35Adapter.php');
+    foreach (['Repo::section()->get($seriesId, $contextId)', 'getByPublicationId((int)$publication->getId(), $contextId)', 'getIdentificationCodes()->toArray()', 'getPhysicalFormat()', 'getPrintISSN()', 'getOnlineISSN()', 'getImprint()'] as $guard) {
+        if (!str_contains($adapterSource, $guard)) throw new \RuntimeException('Missing publication matter projection: ' . $guard);
+    }
+    if (!str_contains($controller, 'mapVolumePublicationMatter($context, $publication)')) throw new \RuntimeException('Missing publication matter manifest.');
     echo "OMP volume manifest contract passed.\n";
 }

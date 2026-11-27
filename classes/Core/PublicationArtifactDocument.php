@@ -34,6 +34,12 @@ final class PublicationArtifactDocument
             'mediaType' => 'application/xml',
             'maxBytes' => 8388608,
         ],
+        'epub' => [
+            'label' => 'EPUB',
+            'extension' => 'epub',
+            'mediaType' => 'application/epub+zip',
+            'maxBytes' => 33554432,
+        ],
         'pdf-print' => [
             'label' => 'PDF',
             'extension' => 'pdf',
@@ -58,8 +64,8 @@ final class PublicationArtifactDocument
                 'mediaType' => $definition['mediaType'],
                 'extension' => $definition['extension'],
                 'maxBytes' => $definition['maxBytes'],
-                'available' => $id !== 'html' || $htmlAvailable,
-                'requires' => $id === 'html' ? 'htmlMonographFilePlugin' : null,
+                'available' => ($id !== 'html' || $htmlAvailable) && ($id !== 'epub' || class_exists(\ZipArchive::class)),
+                'requires' => $id === 'html' ? 'htmlMonographFilePlugin' : ($id === 'epub' ? 'php-zip' : null),
             ];
         }
         return $result;
@@ -164,6 +170,11 @@ final class PublicationArtifactDocument
             return;
         }
 
+        if ($format === 'epub') {
+            self::validateEpub($bytes);
+            return;
+        }
+
         if (!str_starts_with($bytes, '%PDF-')) {
             throw new InvalidArgumentException(
                 'The PDF artifact does not have a valid PDF signature.'
@@ -173,6 +184,119 @@ final class PublicationArtifactDocument
         $tail = substr($bytes, -2048);
         if ($tail === false || !str_contains($tail, '%%EOF')) {
             throw new InvalidArgumentException('The PDF artifact is incomplete.');
+        }
+    }
+
+    /**
+     * Initially accept the static six-entry EPUB 3 profile emitted by Studio.
+     * Never extract the archive, fetch XML dependencies or accept arbitrary
+     * scripts, remote resources, extra entries or oversized decompression.
+     * This is a transfer boundary, not an EPUBCheck conformance certificate.
+     */
+    private static function validateEpub(string $bytes): void
+    {
+        if (!class_exists(\ZipArchive::class)) {
+            throw new InvalidArgumentException('PHP ZIP support is required for EPUB transfer.');
+        }
+        $temporary = tmpfile();
+        if (!$temporary) throw new InvalidArgumentException('Unable to inspect EPUB.');
+        $zip = new \ZipArchive();
+        $opened = false;
+        try {
+            if (fwrite($temporary, $bytes) !== strlen($bytes) || !fflush($temporary)) {
+                throw new InvalidArgumentException('Unable to inspect EPUB.');
+            }
+            $opened = $zip->open(stream_get_meta_data($temporary)['uri'], \ZipArchive::RDONLY | \ZipArchive::CHECKCONS) === true;
+            if (!$opened || $zip->numFiles !== 6) throw new InvalidArgumentException('Unsupported Studio EPUB package.');
+            $required = ['mimetype', 'META-INF/container.xml', 'EPUB/package.opf', 'EPUB/nav.xhtml', 'EPUB/article.xhtml', 'EPUB/styles.css'];
+            $contents = [];
+            $total = 0;
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                $stat = $zip->statIndex($i);
+                if (!$stat || !in_array($stat['name'], $required, true) || isset($contents[$stat['name']]) ||
+                    $stat['size'] < 1 || $stat['size'] > 16777216 ||
+                    !in_array($stat['comp_method'], [\ZipArchive::CM_STORE, \ZipArchive::CM_DEFLATE], true) ||
+                    ($stat['encryption_method'] ?? 0) !== 0) {
+                    throw new InvalidArgumentException('Unsupported or unsafe EPUB entry.');
+                }
+                $total += $stat['size'];
+                if ($total > 33554432 || ($i === 0 && ($stat['name'] !== 'mimetype' || $stat['comp_method'] !== \ZipArchive::CM_STORE))) {
+                    throw new InvalidArgumentException('Invalid EPUB package order or size.');
+                }
+                $value = $zip->getFromIndex($i, $stat['size']);
+                if ($value === false || strlen($value) !== $stat['size']) throw new InvalidArgumentException('Unreadable EPUB entry.');
+                $contents[$stat['name']] = $value;
+            }
+            if (($contents['mimetype'] ?? null) !== 'application/epub+zip') throw new InvalidArgumentException('Invalid EPUB mimetype.');
+            // The first local header must also be the uncompressed mimetype.
+            if (substr($bytes, 0, 4) !== "PK\x03\x04" || substr($bytes, 30, 8) !== 'mimetype' ||
+                unpack('v', substr($bytes, 8, 2))[1] !== 0 ||
+                unpack('v', substr($bytes, 26, 2))[1] !== 8 ||
+                unpack('v', substr($bytes, 28, 2))[1] !== 0) {
+                throw new InvalidArgumentException('Invalid EPUB first local header.');
+            }
+            $container = self::epubXml($contents['META-INF/container.xml'], 'container', 'urn:oasis:names:tc:opendocument:xmlns:container');
+            $roots = $container->getElementsByTagNameNS('urn:oasis:names:tc:opendocument:xmlns:container', 'rootfile');
+            if ($roots->length !== 1 || $roots->item(0)->getAttribute('full-path') !== 'EPUB/package.opf' ||
+                $roots->item(0)->getAttribute('media-type') !== 'application/oebps-package+xml') {
+                throw new InvalidArgumentException('Invalid EPUB container rootfile.');
+            }
+            $opf = self::epubXml($contents['EPUB/package.opf'], 'package', 'http://www.idpf.org/2007/opf');
+            if ($opf->documentElement->getAttribute('version') !== '3.0') throw new InvalidArgumentException('EPUB 3 is required.');
+            $items = $opf->getElementsByTagNameNS('http://www.idpf.org/2007/opf', 'item');
+            $expected = ['article' => ['article.xhtml', 'application/xhtml+xml'], 'nav' => ['nav.xhtml', 'application/xhtml+xml'], 'css' => ['styles.css', 'text/css']];
+            if ($items->length !== count($expected)) throw new InvalidArgumentException('Invalid EPUB manifest.');
+            foreach ($items as $item) {
+                $id = $item->getAttribute('id');
+                if (!isset($expected[$id]) || $expected[$id] !== [$item->getAttribute('href'), $item->getAttribute('media-type')] ||
+                    ($id === 'nav' ? $item->getAttribute('properties') !== 'nav' : $item->getAttribute('properties') !== '')) {
+                    throw new InvalidArgumentException('Unsupported EPUB resource.');
+                }
+                unset($expected[$id]);
+            }
+            $spine = $opf->getElementsByTagNameNS('http://www.idpf.org/2007/opf', 'itemref');
+            if ($spine->length !== 1 || $spine->item(0)->getAttribute('idref') !== 'article') throw new InvalidArgumentException('Invalid EPUB spine.');
+            foreach (['EPUB/nav.xhtml', 'EPUB/article.xhtml'] as $name) {
+                $html = self::epubXml(str_replace('<!DOCTYPE html>', '', $contents[$name]), 'html', 'http://www.w3.org/1999/xhtml');
+                foreach ($html->getElementsByTagName('*') as $element) {
+                    if ($element->namespaceURI !== 'http://www.w3.org/1999/xhtml' ||
+                        !in_array($element->localName, ['html','head','meta','title','link','body','article','header','section','h1','h2','h3','h4','h5','h6','p','span','strong','br','nav','ol','li','a'], true)) {
+                        throw new InvalidArgumentException('Unsupported or active EPUB content.');
+                    }
+                    foreach ($element->attributes as $attribute) {
+                        $key = strtolower($attribute->nodeName);
+                        if (str_starts_with($key, 'on') || in_array($key, ['src','srcset','style','action','formaction','http-equiv','xml:base'], true)) {
+                            throw new InvalidArgumentException('Unsafe EPUB attribute.');
+                        }
+                        if ($key === 'href' && !($element->localName === 'link' && $attribute->value === 'styles.css') &&
+                            !($element->localName === 'a' && preg_match('/^article\.xhtml#sec-[a-zA-Z0-9_.:-]+$/D', $attribute->value))) {
+                            throw new InvalidArgumentException('External or unsupported EPUB link.');
+                        }
+                    }
+                }
+            }
+            $css = $contents['EPUB/styles.css'];
+            if (preg_match('/[@\\\\]|url\s*\(|expression\s*\(/i', $css)) throw new InvalidArgumentException('Unsafe EPUB stylesheet.');
+        } finally {
+            if ($opened) $zip->close();
+            fclose($temporary);
+        }
+    }
+
+    private static function epubXml(string $xml, string $root, string $namespace): DOMDocument
+    {
+        if (preg_match('/<!DOCTYPE\b|<!ENTITY\b|<\?(?!xml\s)/i', $xml)) throw new InvalidArgumentException('Unsafe EPUB XML declaration.');
+        $previous = libxml_use_internal_errors(true);
+        try {
+            $dom = new DOMDocument();
+            if (!$dom->loadXML($xml, LIBXML_NONET) || !$dom->documentElement ||
+                $dom->documentElement->localName !== $root || $dom->documentElement->namespaceURI !== $namespace) {
+                throw new InvalidArgumentException('Invalid EPUB XML.');
+            }
+            return $dom;
+        } finally {
+            libxml_clear_errors();
+            libxml_use_internal_errors($previous);
         }
     }
 

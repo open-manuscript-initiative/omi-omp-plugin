@@ -3,7 +3,7 @@
 ## Requirements
 
 - Open Monograph Press 3.5.x
-- PHP 8.2 or later, matching the installed OMP release requirements
+- PHP 8.3 or 8.4, matching the installed OMP release requirements (primary target: OMP 3.5.0-6 / PHP 8.4)
 - HTTPS for production use
 - Open Manuscript Studio for Studio-side integration
 

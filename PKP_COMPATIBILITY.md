@@ -127,3 +127,7 @@ Before submitting a release to the Plugin Gallery, verify all of the following o
 13. uninstall/upgrade behavior and regression check of normal OMP review completion.
 
 PHP lint/package CI is necessary but does not replace this installation-level OMP integration test.
+
+### PHP support policy
+
+The plugin CI supports PHP 8.3 and 8.4. PHP 8.2 is retired from the supported matrix. Native OMP integration tests cover 3.5.0-4/-5/-6 on PHP 8.3 and 3.5.0-6 on PHP 8.4 as the primary deployment target.

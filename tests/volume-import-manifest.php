@@ -113,5 +113,12 @@ namespace {
         if (!str_contains($adapterSource, $guard)) throw new \RuntimeException('Missing publication matter projection: ' . $guard);
     }
     if (!str_contains($controller, 'mapVolumePublicationMatter($context, $publication)')) throw new \RuntimeException('Missing publication matter manifest.');
+    $pagesStart = strpos($controller, 'public function chapterPageRange');
+    $pagesEnd = strpos($controller, 'public function publicationArtifact', $pagesStart);
+    $pagesHandler = substr($controller, $pagesStart, $pagesEnd - $pagesStart);
+    foreach (['volumeImportTarget', 'canEditPublication', 'getChapter($chapterId, $publicationId)', 'lockForUpdate()', 'expectedWorkflowToken',
+        'setPages($pages)', 'updateLocaleFields($chapter)', 'private, no-store', 'confirmed', 'omi-chapter-page-range/1'] as $guard) {
+        if (!str_contains($pagesHandler, $guard)) throw new \RuntimeException('Missing chapter page-range boundary: ' . $guard);
+    }
     echo "OMP volume manifest contract passed.\n";
 }

@@ -28,3 +28,7 @@ Next: Studio volume receiver and explicit choice between full manuscript and cha
 ## Publication matter
 
 The manifest additionally projects the configured publisher and publication place, localized press name, the selected press-scoped series (localized title/subtitle, position, print/online ISSN), and current publication formats with physical/digital classification, ONIX product form, imprint and native identification codes. The format-specific identifiers remain distinct; no ISBN is inferred from a DOI or from another edition. No contact email or private configuration is included.
+
+## Chapter printed page range API
+
+POST `chapter-page-range` uses the authenticated native editorial session, not the signed read-only volume token. Inspect requires exact installation, press, submission, current unpublished Production publication and chapter IDs. Apply additionally requires confirmed positive decimal printed pages and the inspected workflow token. The server revalidates scope inside a transaction, locks the submission/publication/chapter and chapter settings, updates the native Chapter pages field only via `setPages` and `updateLocaleFields`, reloads, and returns a receipt. No publication, file approval or availability change is made. Physical PDF indices and ambiguous printed labels are not accepted as authoritative by the Studio client; its verified layout projection and UI are a separate integration step. Native runtime E2E still required.

@@ -177,3 +177,11 @@ This protocol never:
 - treats the OMI shared secret as an editor credential.
 
 The editor authenticates through native OMP API/session authorization.
+
+## EPUB 3 proof transfer
+
+The EPUB format is advertised only when PHP ZipArchive is available. Initially the receiver accepts only the static six-entry EPUB 3 package emitted by Studio, with bounded archive sizes, exact resource paths, safe XML parsing and no active or external content. It checks the same SHA-256/build provenance as other formats, then creates an unpublished, unapproved and non-viewable native OMP Publication Format proof. It is not a general EPUB validator or a guarantee of scholarly export fidelity; the Studio transfer UI and richer EPUB export profile remain separate work.
+
+### Reflowable scholarly EPUB profile
+
+The receiver now permits bounded manifest-declared raster resources and static XHTML scholarly markup, including note links, tables, nested navigation and formatted text. It rejects missing or duplicate internal targets, unmanifested or unused raster images, mismatched raster media types, excessive image dimensions, active content and unsafe resource paths. External HTTP(S)/mailto links are navigational anchors only; no remote image or stylesheet fetch is allowed. This is a restricted acceptance profile, not a replacement for EPUBCheck.

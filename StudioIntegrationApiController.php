@@ -5,6 +5,9 @@ use APP\core\Application;
 use APP\facades\Repo;
 use APP\plugins\generic\studioIntegration\classes\Adapters\Omp35Adapter;
 use APP\plugins\generic\studioIntegration\classes\Core\LaunchToken;
+use APP\plugins\generic\studioIntegration\classes\Core\WorkflowSnapshot;
+use APP\plugins\generic\studioIntegration\classes\Core\MetadataReconciliation;
+use PKP\observers\events\MetadataChanged;
 use APP\plugins\generic\studioIntegration\classes\Core\PublicationArtifactDocument;
 use APP\submission\Submission;
 use Illuminate\Support\Facades\DB;
@@ -47,6 +50,8 @@ class StudioIntegrationApiController extends PKPBaseController
     public function getGroupRoutes(): void
     {
         Route::get('', $this->capabilities(...))->name('api.omiIntegration.capabilities');
+        Route::post('metadata', $this->metadata(...))->middleware(['has.user', self::roleAuthorizer([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN])])->name('api.omiIntegration.metadata');
+        Route::get('workflow-status', $this->workflowStatus(...))->middleware(['has.user', self::roleAuthorizer([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN])])->name('api.omiIntegration.workflowStatus');
         Route::get('submission-options', $this->submissionOptions(...))->name('api.omiIntegration.submissionOptions');
         Route::get('volumes/{submissionId}/import-manifest', $this->volumeImportManifest(...))
             ->whereNumber('submissionId')
@@ -186,6 +191,97 @@ class StudioIntegrationApiController extends PKPBaseController
             ]];
         });
         return response()->json($result)->header('Cache-Control', 'private, no-store');
+    }
+
+    public function metadata(IlluminateRequest $input): JsonResponse
+    {
+        $data = $input->validate([
+            'action' => 'required|in:inspect,apply', 'submissionId' => 'required|integer|min:1',
+            'installationId' => 'required|string|max:255', 'contextId' => 'required|integer|min:1',
+            'publicationId' => 'required_if:action,apply|integer|min:1',
+            'locale' => 'required_if:action,apply|string|max:32',
+            'expectedStateToken' => 'required_if:action,apply|string|size:64',
+            'fields' => 'required_if:action,apply|array|min:1|max:4',
+            'confirmed' => 'required_if:action,apply|accepted',
+        ]);
+        $request = Application::get()->getRequest();
+        $context = $request->getContext();
+        $user = $request->getUser();
+        if (!$context || !$user || !$this->plugin->getEnabled($context->getId()) || (int)$context->getId() !== (int)$data['contextId'] || !hash_equals($this->plugin->getInstallationId($context->getId(), $request), $data['installationId'])) return $this->error('editor_required', 'An authenticated editorial user is required.', 403);
+        $load = function () use ($data, $context, $user) {
+            $submission = Repo::submission()->get((int)$data['submissionId']);
+            if (!$submission || (int)$submission->getData('contextId') !== (int)$context->getId()) abort(404, 'Submission not found.');
+            $stages = Repo::user()->getAccessibleWorkflowStages($user->getId(), $context->getId(), $submission);
+            $roles = $stages[(int)$submission->getData('stageId')] ?? [];
+            if (!array_intersect($roles, [Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN])) abort(403, 'Editorial access to this submission stage is required.');
+            $publication = Repo::publication()->get((int)$submission->getData('currentPublicationId'));
+            if (!$publication || (int)$publication->getData('submissionId') !== (int)$submission->getId()) abort(409, 'The current publication is unavailable.');
+            return [$submission, $publication];
+        };
+        [$submission, $publication] = $load();
+        $canWrite = fn($s, $p) => (int)$p->getData('status') === Submission::STATUS_QUEUED && Repo::submission()->canEditPublication($s->getId(), $user->getId());
+        $snapshot = function ($s, $p) use ($context, $canWrite) {
+            $adapter = new Omp35Adapter();
+            return MetadataReconciliation::snapshot($s, $p, $context->getSupportedSubmissionMetadataLocales(), $adapter->reconciliationKeywords($p, (string)$s->getData('locale')), $adapter->mapContributors($s), $canWrite($s, $p));
+        };
+        if ($data['action'] === 'inspect') return response()->json(['snapshot' => $snapshot($submission, $publication)])->header('Cache-Control', 'private, no-store');
+        $result = DB::transaction(function () use ($data, $context, $load, $canWrite, $snapshot) {
+            DB::table('submissions')->where('submission_id', (int)$data['submissionId'])->lockForUpdate()->first();
+            DB::table('publications')->where('publication_id', (int)$data['publicationId'])->lockForUpdate()->first();
+            DB::table('publication_settings')->where('publication_id', (int)$data['publicationId'])->lockForUpdate()->get();
+            [$submission, $publication] = $load();
+            if (!$canWrite($submission, $publication)) abort(403, 'Native OMP metadata write permission on an unpublished publication is required.');
+            $current = $snapshot($submission, $publication);
+            if ((int)$data['publicationId'] !== (int)$publication->getId() || !hash_equals($current['stateToken'], (string)$data['expectedStateToken'])) abort(409, 'OMP metadata changed. Inspect and compare again.');
+            try { $params = MetadataReconciliation::patch($publication, (string)$data['locale'], (array)$data['fields'], $context->getSupportedSubmissionMetadataLocales(), $current['metadata']['keywords']); }
+            catch (\InvalidArgumentException $e) { abort(422, $e->getMessage()); }
+            $params['id'] = $publication->getId();
+            $params['submissionId'] = $submission->getId();
+            $errors = Repo::publication()->validate($publication, $params, $submission, $context);
+            if ($errors) abort(422, 'Native OMP metadata validation rejected the proposal.');
+            Repo::publication()->edit($publication, $params);
+            [$updatedSubmission, $updated] = $load();
+            if ((int)$updated->getId() !== (int)$publication->getId()) abort(409, 'Current OMP publication changed.');
+            $after = $snapshot($updatedSubmission, $updated);
+            foreach (array_keys($data['fields']) as $field) {
+                $expected = $field === 'keywords' ? $params[$field][$data['locale']] : MetadataReconciliation::plainText($params[$field][$data['locale']]);
+                $actual = $after['metadata'][$field][$data['locale']] ?? ($field === 'keywords' ? [] : '');
+                if ($actual !== $expected) abort(409, 'OMP did not retain the selected metadata value.');
+            }
+            return [
+                'snapshot' => $after,
+                'receipt' => ['protocol' => MetadataReconciliation::PROTOCOL, 'submissionId' => (int)$submission->getId(), 'publicationId' => (int)$publication->getId(), 'locale' => $data['locale'], 'fields' => array_keys($data['fields']), 'previousStateToken' => $current['stateToken'], 'stateToken' => $after['stateToken'], 'contextId' => (int)$context->getId(), 'installationId' => $data['installationId'], 'published' => false],
+                'submission' => $submission,
+            ];
+        });
+        event(new MetadataChanged($result['submission']));
+        unset($result['submission']);
+        return response()->json($result)->header('Cache-Control', 'private, no-store');
+    }
+
+    /** Read the current OMP editorial state using native, submission-scoped access. */
+    public function workflowStatus(IlluminateRequest $input): JsonResponse
+    {
+        $data = $input->validate(['submissionId' => 'required|integer|min:1']);
+        $request = Application::get()->getRequest();
+        $context = $request->getContext();
+        $user = $request->getUser();
+        if (!$context || !$user || !$this->plugin->getEnabled($context->getId())) {
+            return $this->error('editor_required', 'An authenticated editorial user is required.', 403);
+        }
+        $submission = Repo::submission()->get((int)$data['submissionId']);
+        if (!$submission || (int)$submission->getData('contextId') !== (int)$context->getId()) {
+            return $this->error('submission_not_found', 'Submission not found.', 404);
+        }
+        $stages = Repo::user()->getAccessibleWorkflowStages($user->getId(), $context->getId(), $submission);
+        $allowed = false;
+        foreach ($stages as $roles) {
+            if (array_intersect($roles, [Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN])) $allowed = true;
+        }
+        if (!$allowed) return $this->error('editor_required', 'Editorial access to this submission is required.', 403);
+        $publication = Repo::publication()->get((int)$submission->getData('currentPublicationId'));
+        return response()->json(WorkflowSnapshot::create($submission, $publication))
+            ->header('Cache-Control', 'private, no-store');
     }
 
     public function publicationArtifact(IlluminateRequest $input): JsonResponse
@@ -629,6 +725,8 @@ class StudioIntegrationApiController extends PKPBaseController
             'capabilities' => [
                 'launch',
                 'metadata.read',
+                'editor.workflow.read',
+                'editor.metadata.reconcile',
                 'editor.volume-manifest.read',
                 'editor.chapter-page-range.write',
                 'volume.import.read',

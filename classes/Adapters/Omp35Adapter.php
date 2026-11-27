@@ -375,6 +375,11 @@ final class Omp35Adapter
         return Repo::publication()->get($publicationId, $submissionId) ?? $current;
     }
 
+    public function reconciliationKeywords(object $publication, string $primaryLocale): array
+    {
+        return $this->getControlledVocab($publication, ControlledVocab::CONTROLLED_VOCAB_SUBMISSION_KEYWORD, $primaryLocale);
+    }
+
     private function getControlledVocab(object $publication, string $symbolic, string $primaryLocale): array
     {
         $publicationId = (int)$publication->getId();

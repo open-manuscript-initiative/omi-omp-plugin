@@ -4,7 +4,7 @@ Open Monograph Press integration plugin for connecting OMP with the Open Manuscr
 
 ## Status
 
-Current source version: **1.7.0.0**. Targeting **OMP 3.5.x**, **PHP 8.3 and 8.4**, and the OMI Integration API v1. Native Studio writeback requires plugin **1.5.0.0** or newer.
+Current source version: **1.7.1.0**. Targeting **OMP 3.5.x**, **PHP 8.3 and 8.4**, and the OMI Integration API v1. Native Studio writeback requires plugin **1.5.0.0** or newer.
 
 Profile identifier:
 

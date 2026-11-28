@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — OMP role return parity
+
+- Add atomic role-specific Word/structured revision return, private/public discussions and retry receipts.
+- Bind internal/external review rounds and chapters, close submitted scientific review access, retain native recommendation compatibility.
+- Add mandatory, target-locale-isolated volume translation metadata and conditional full-text translation. Requires the companion Studio change; no release version bump or production validation.
+
 ## 1.6.0.0 — 2026-11-27
 
 - Add manager-scoped signed complete-volume import, ordered chapter manifests and protected chapter DOCX retrieval (#27).

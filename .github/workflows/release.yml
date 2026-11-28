@@ -122,6 +122,7 @@ jobs:
             StudioIntegrationApiHandler.php
             StudioIntegrationApiController.php
             StudioIntegrationNativeApiController.php
+            classes/Core/WorkflowFileDocument.php
             classes/Adapters/Omp35Adapter.php
             locale/en/locale.po
           )

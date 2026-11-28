@@ -166,3 +166,5 @@ subclasses of the changed protected PKP schema mappers. See the
 [shared review](https://github.com/open-manuscript-initiative/open-manuscript-studio/blob/main/docs/pkp-3.5.0-6-review.md)
 and retain the per-version installation/workflow CI results. This matrix
 extension does not publish a new plugin package or certify production upgrades.
+
+See [role-specific OMP assignment return](docs/role-writeback.md) for the unreleased assignment/translation parity workflow and deployment prerequisites.

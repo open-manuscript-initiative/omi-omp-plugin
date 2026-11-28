@@ -349,7 +349,7 @@ class StudioIntegrationPlugin extends GenericPlugin
             ->limit(1)
             ->getMany()
             ->first();
-        if (!($reviewAssignment instanceof ReviewAssignment)) return null;
+        if (!($reviewAssignment instanceof ReviewAssignment) || $reviewAssignment->getDateCompleted()) return null;
         $component = $this->reviewComponentForAssignment($submission, $reviewAssignment);
         if ($component === null) return null;
 

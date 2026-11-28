@@ -86,6 +86,7 @@ class StudioIntegrationNativeApiController extends PKPBaseController
                 'version' => '1.6.0',
                 'platform' => 'omp',
             ],
+            'assignmentWriteback' => ['protocol' => 'omi-assignment-result/1', 'workflowAssignment' => 'workflow-assignment', 'assignmentResult' => 'assignment-result'],
             'nativeApis' => [
                 'reviewRecommendations' => [
                     'supported' => $this->supportsCustomizableReviewerRecommendations(),
@@ -798,7 +799,7 @@ class StudioIntegrationNativeApiController extends PKPBaseController
         $assignment = Repo::reviewAssignment()->get($assignmentId, $submissionId);
         if (!($assignment instanceof ReviewAssignment)) return null;
         if ((int)$assignment->getSubmissionId() !== $submissionId || (int)$assignment->getReviewerId() !== $actorId) return null;
-        if ($assignment->getCancelled() || $assignment->getDeclined()) return null;
+        if ($assignment->getCancelled() || $assignment->getDeclined() || $assignment->getDateCompleted()) return null;
 
         $submission = Repo::submission()->get($submissionId);
         if (!$submission || (int)$submission->getData('stageId') !== (int)$assignment->getStageId()) return null;

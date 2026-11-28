@@ -17,6 +17,8 @@ use PKP\plugins\Hook;
 use PKP\security\Role;
 use PKP\submission\reviewAssignment\ReviewAssignment;
 
+require_once __DIR__ . '/bootstrap.php';
+
 class StudioIntegrationPlugin extends GenericPlugin
 {
     private bool $assetsInjected = false;
@@ -87,15 +89,15 @@ class StudioIntegrationPlugin extends GenericPlugin
         $page = &$args[0];
         $handler = &$args[3];
         if ($page !== 'omiIntegration') return false;
-        require_once($this->getPluginPath() . '/StudioIntegrationApiHandler.php');
+        require_once(__DIR__ . '/StudioIntegrationApiHandler.php');
         $handler = new StudioIntegrationApiHandler($this);
         return true;
     }
 
     public function registerApiController(string $hookName, APIRouter $apiRouter): bool
     {
-        require_once($this->getPluginPath() . '/StudioIntegrationApiController.php');
-        require_once($this->getPluginPath() . '/StudioIntegrationNativeApiController.php');
+        require_once(__DIR__ . '/StudioIntegrationApiController.php');
+        require_once(__DIR__ . '/StudioIntegrationNativeApiController.php');
 
         // PKP 3.5 rejects duplicate plugin API handler paths. Both the legacy
         // and OMP-native route sets intentionally live under /omi-integration,

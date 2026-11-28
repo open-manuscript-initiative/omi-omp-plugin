@@ -34,6 +34,8 @@ use PKP\submissionFile\SubmissionFile;
  * hasCustomizableReviewerRecommendation() exists on APP\core\Application,
  * so capability detection is feature-gated and defaults to false.
  */
+require_once __DIR__ . '/bootstrap.php';
+
 class StudioIntegrationNativeApiController extends PKPBaseController
 {
     private const SERVICE_CLOCK_SKEW_SECONDS = 300;
@@ -83,7 +85,7 @@ class StudioIntegrationNativeApiController extends PKPBaseController
             'profile' => Omp35Adapter::PROFILE,
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OMP',
-                'version' => '1.7.0',
+                'version' => '1.7.1',
                 'platform' => 'omp',
             ],
             'assignmentWriteback' => ['protocol' => 'omi-assignment-result/1', 'workflowAssignment' => 'workflow-assignment', 'assignmentResult' => 'assignment-result'],

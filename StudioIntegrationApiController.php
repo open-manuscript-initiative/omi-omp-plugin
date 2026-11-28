@@ -32,6 +32,8 @@ use PKP\submission\SubmissionComment;
 use PKP\submission\reviewAssignment\ReviewAssignment;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
+require_once __DIR__ . '/bootstrap.php';
+
 class StudioIntegrationApiController extends PKPBaseController
 {
     private const SERVICE_CLOCK_SKEW_SECONDS = 300;
@@ -724,7 +726,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => Omp35Adapter::PROFILE,
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OMP',
-                'version' => '1.7.0',
+                'version' => '1.7.1',
                 'platform' => 'omp',
             ],
             'context' => (new Omp35Adapter())->mapContext($context, $request),

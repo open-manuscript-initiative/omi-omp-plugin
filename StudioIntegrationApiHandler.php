@@ -4,6 +4,8 @@ namespace APP\plugins\generic\studioIntegration;
 use APP\handler\Handler;
 use PKP\core\JSONMessage;
 
+require_once __DIR__ . '/bootstrap.php';
+
 class StudioIntegrationApiHandler extends Handler
 {
     private StudioIntegrationPlugin $plugin;

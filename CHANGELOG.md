@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.1.0 — 2026-11-28
+
+- Load plugin-local PHP helpers independently of PKP autoloading and the working directory; prevent OMP launch API class-not-found errors.
+
 ## 1.7.0.0 — 2026-11-28
 
 - Add atomic role-specific Word/structured revision return, private/public discussions and retry receipts.

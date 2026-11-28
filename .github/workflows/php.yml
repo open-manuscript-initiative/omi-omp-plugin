@@ -34,6 +34,9 @@ jobs:
           coverage: none
           extensions: mbstring, xml, zip
 
+      - name: Check isolated plugin helper loading
+        run: php tests/plugin-class-loading.php
+
       - name: Check publication artifact provenance
         run: php tests/publication-artifact-document.php
 
@@ -103,6 +106,8 @@ jobs:
           set -euo pipefail
           required=(
             version.xml
+            bootstrap.php
+            tests/plugin-class-loading.php
             LICENSE
             README.md
             INSTALL.md

@@ -113,6 +113,7 @@ jobs:
           set -euo pipefail
           required=(
             version.xml
+            bootstrap.php
             LICENSE
             README.md
             INSTALL.md
@@ -166,6 +167,7 @@ jobs:
           set -euo pipefail
           for path in \
             studioIntegration/version.xml \
+            studioIntegration/bootstrap.php \
             studioIntegration/StudioIntegrationPlugin.php \
             studioIntegration/StudioIntegrationNativeApiController.php \
             studioIntegration/locale/en/locale.po; do

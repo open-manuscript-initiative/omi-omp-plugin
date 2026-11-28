@@ -37,6 +37,9 @@ jobs:
       - name: Check publication artifact provenance
         run: php tests/publication-artifact-document.php
 
+      - name: Check role-specific document and translation writeback
+        run: php tests/role-writeback.php
+
       - name: Check metadata reconciliation
         run: php tests/metadata-reconciliation.php
 
@@ -111,6 +114,7 @@ jobs:
             StudioIntegrationApiController.php
             StudioIntegrationNativeApiController.php
             classes/Adapters/Omp35Adapter.php
+            classes/Core/WorkflowFileDocument.php
             classes/Core/HtmlPublicationDocument.php
             classes/Core/PublicationArtifactDocument.php
             docs/publication-artifact-transfer.md

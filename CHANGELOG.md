@@ -1,10 +1,11 @@
 # Changelog
 
-## Unreleased — OMP role return parity
+## 1.7.0.0 — 2026-11-28
 
 - Add atomic role-specific Word/structured revision return, private/public discussions and retry receipts.
 - Bind internal/external review rounds and chapters, close submitted scientific review access, retain native recommendation compatibility.
-- Add mandatory, target-locale-isolated volume translation metadata and conditional full-text translation. Requires the companion Studio change; no release version bump or production validation.
+- Add mandatory, target-locale-isolated volume translation metadata and conditional full-text translation. Requires Studio 1.0.0-rc.6; production acceptance remains pending.
+- Add signed, read-only work-context lookup, native chapter/volume grouping and receipt provenance for shareable participant statements in Studio.
 
 ## 1.6.0.0 — 2026-11-27
 

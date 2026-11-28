@@ -4,7 +4,7 @@ Open Monograph Press integration plugin for connecting OMP with the Open Manuscr
 
 ## Status
 
-Current source version: **1.6.0.0**. Targeting **OMP 3.5.x**, **PHP 8.3 and 8.4**, and the OMI Integration API v1. Native Studio writeback requires plugin **1.5.0.0** or newer.
+Current source version: **1.7.0.0**. Targeting **OMP 3.5.x**, **PHP 8.3 and 8.4**, and the OMI Integration API v1. Native Studio writeback requires plugin **1.5.0.0** or newer.
 
 Profile identifier:
 
@@ -168,3 +168,5 @@ and retain the per-version installation/workflow CI results. This matrix
 extension does not publish a new plugin package or certify production upgrades.
 
 See [role-specific OMP assignment return](docs/role-writeback.md) for the unreleased assignment/translation parity workflow and deployment prerequisites.
+
+Work statistics: version 1.7.0.0 adds read-only, HMAC-authenticated work-context lookup for Studio 1.0.0-rc.6 participant statements. Signed assignment bindings retain native article/issue or chapter/volume identity; quantities and downloadable statements are computed in Studio. Native publication and payment approval remain separate.

@@ -140,7 +140,7 @@ namespace {
     }
     class Dao {
         public function __construct(public string $name) {}
-        public function getChapter($id,$publication) { return (int)$id===6 && (int)$publication===8 ? new Record(['id'=>6]) : null; }
+        public function getChapter($id,$publication) { return (int)$id===6 && (int)$publication===8 ? new Record(['id'=>6,'title'=>['hu'=>'Hatodik fejezet']]) : null; }
         public function getLastReviewRoundBySubmissionId(...$args) { return $this->getById(5); }
         public function getById($id) { return new Record(['id'=>5,'submissionId'=>217,'stageId'=>State::$stage,'round'=>2]); }
         public function getEnabledByContextId(...$args) { return new class { public bool $read=false; public function next() { if($this->read)return null; $this->read=true; return new Record(['id'=>1,'dependent'=>false]); } }; }
@@ -277,5 +277,26 @@ namespace {
     $task['componentExternalId']='99';
     check($controller->workflowAssignment(new \Illuminate\Http\Request($task,'workflow-assignment'))->status===403, 'Foreign chapter accepted');
     echo "OMP proof-language policy and signed chapter association checks passed\n";
+
+    State::reset();
+    $bound=bindTask($controller,'LANGUAGE_REVIEW');
+    $nativeTask=['localId'=>'11111111-1111-4111-8111-111111111111','submissionExternalId'=>'217','assignmentToken'=>$bound['assignmentToken']];
+    $contextResult=$controller->workContexts(new \Illuminate\Http\Request(['tasks'=>[$nativeTask]], 'work-contexts'));
+    check($contextResult->status===200 && $contextResult->data['contexts'][0]['context']['submissionId']==='217', 'Bound work context unavailable');
+
+    $origin=$contextResult->data['contexts'][0]['context'];
+    check($origin['unitKind']==='volume' && $origin['containerId']==='8', 'Native volume identity missing');
+    $chapterBound=$controller->workflowAssignment(new \Illuminate\Http\Request(['assignmentId'=>'22222222-2222-4222-8222-222222222222','submissionExternalId'=>'217','editorExternalId'=>'10','reviewerEmail'=>'participant@example.org','assignmentType'=>'LANGUAGE_REVIEW','componentExternalId'=>'6'],'workflow-assignment'));
+    $chapterContext=$controller->workContexts(new \Illuminate\Http\Request(['tasks'=>[['localId'=>'22222222-2222-4222-8222-222222222222','submissionExternalId'=>'217','assignmentToken'=>$chapterBound->data['assignmentToken']]]], 'work-contexts'));
+    $chapterOrigin=$chapterContext->data['contexts'][0]['context'];
+    check($chapterOrigin['unitId']==='chapter:6:8' && $chapterOrigin['title']==='Hatodik fejezet' && $chapterOrigin['containerId']==='8', 'Chapter work escaped its native volume');
+    $nativeTask['submissionExternalId']='999';
+    check($controller->workContexts(new \Illuminate\Http\Request(['tasks'=>[$nativeTask]], 'work-contexts'))->status===403, 'Work statement context crossed submissions');
+    State::$editor=false;
+    $nativeTask['submissionExternalId']='217';
+    $revoked=$controller->workContexts(new \Illuminate\Http\Request(['tasks'=>[$nativeTask]], 'work-contexts'));
+    check($revoked->status===200 && $revoked->data['contexts'][0]['context']===null, 'Revoked editor retained fresh work context');
+    check($controller->workContexts(new \Illuminate\Http\Request(['tasks'=>[]], 'work-contexts'))->status===422, 'Empty work context request accepted');
+    echo "Read-only work-context authorization passed\n";
 
 }
